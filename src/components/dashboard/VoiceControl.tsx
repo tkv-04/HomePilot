@@ -48,7 +48,7 @@ interface VoiceControlProps {
 }
 
 const WAKE_WORD = "jarvis";
-const COMMAND_WAIT_TIMEOUT = 4000;
+const COMMAND_WAIT_TIMEOUT = 4000; // 4 seconds
 
 export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceControlProps) {
   const [commandText, setCommandText] = useState("");
@@ -59,7 +59,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
 
   const [speechRecognitionApiAvailable, setSpeechRecognitionApiAvailable] = useState(false);
   const [speechSynthesisApiAvailable, setSpeechSynthesisApiAvailable] = useState(false);
-  const [userDesiredListening, setUserDesiredListening] = useState(false);
+  const [userDesiredListening, setUserDesiredListening] = useState(false); // Default to false, will be set true in useEffect
   const [micActuallyActive, setMicActuallyActive] = useState(false);
   const [micPermissionError, setMicPermissionError] = useState<string | null>(null);
   const [isWaitingForCommandAfterWakeWord, setIsWaitingForCommandAfterWakeWord] = useState(false);
@@ -81,7 +81,9 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
 
   const speak = useCallback((text: string) => {
     if (!speechSynthesisApiAvailable || typeof window === 'undefined' || !window.speechSynthesis) {
-      toast({ title: "Voice Output Error", description: "Speech synthesis is not available.", variant: "destructive" });
+      // Do not toast here, as it can be annoying if speech is intentionally off.
+      // The UI will reflect that speech is not available.
+      console.warn("Speech synthesis is not available or not supported.");
       return;
     }
     try {
@@ -95,14 +97,13 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
         setFeedbackType('speaking');
       };
       utterance.onend = () => {
-        // Optionally reset feedback after speaking, or let it persist
-        // setFeedbackMessage(null);
-        // setFeedbackType(null);
+        // If the last spoken message was a query response, clear it or set a neutral message.
+        // For now, let it persist until the next interaction.
       };
       utterance.onerror = (event) => {
         console.error("SpeechSynthesis Error:", event.error);
         toast({ title: "Voice Output Error", description: `Could not speak: ${event.error}`, variant: "destructive" });
-        setFeedbackMessage(`Error speaking: ${event.error}`); // Update UI feedback
+        setFeedbackMessage(`Error speaking: ${event.error}`);
         setFeedbackType('error');
       };
       window.speechSynthesis.speak(utterance);
@@ -111,6 +112,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
         toast({ title: "Voice Output Error", description: "Failed to initiate speech.", variant: "destructive" });
     }
   }, [speechSynthesisApiAvailable, toast]);
+
 
   useEffect(() => {
     isProcessingCommandRef.current = isProcessingCommand;
@@ -126,18 +128,22 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       if (SpeechRecognitionAPI && !recognitionRef.current) {
         try {
           recognitionRef.current = new SpeechRecognitionAPI();
-          recognitionRef.current.continuous = false;
+          recognitionRef.current.continuous = false; // True means it keeps listening after a result
           recognitionRef.current.lang = 'en-US';
-          recognitionRef.current.interimResults = false;
+          recognitionRef.current.interimResults = false; // We only care about final results
           recognitionRef.current.maxAlternatives = 1;
           setSpeechRecognitionApiAvailable(true);
-          if (!micPermissionError) {
+          if (!micPermissionError) { // Only set userDesiredListening if no prior error
             setUserDesiredListening(true);
           }
-        } catch (e) {
-            console.error("Error initializing SpeechRecognition:", e);
+        } catch (e: any) {
+            console.error("Error initializing SpeechRecognition:", e.name, e.message);
             setSpeechRecognitionApiAvailable(false);
-            setMicPermissionError("Could not initialize voice recognition.");
+            let errorMsg = "Could not initialize voice recognition.";
+            if (e.name === 'SecurityError') { // Common for HTTPS issues or frame restrictions
+                errorMsg = "Voice recognition security error. Ensure you are on HTTPS and not in a restricted iframe.";
+            }
+            setMicPermissionError(errorMsg);
         }
       }
     } else {
@@ -147,6 +153,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
     }
 
     return () => {
+      // Cleanup: stop recognition and clear timeouts
       if (recognitionRef.current && micActuallyActive) {
         try { recognitionRef.current.stop(); recognitionRef.current.abort(); } catch (e) {}
       }
@@ -155,10 +162,10 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Ensure micPermissionError is not in deps to avoid re-init loop on error
+  }, []); // micPermissionError removed from deps to prevent re-init loop on error.
 
   const handleInterpretAndExecuteCommand = useCallback(async (fullTranscript: string) => {
-    if (isProcessingCommandRef.current && !isWaitingForCommandAfterWakeWordRef.current) return; // Prevent re-entry if already processing (unless waiting for command part)
+    if (isProcessingCommandRef.current && !isWaitingForCommandAfterWakeWordRef.current) return;
 
     if (waitForCommandTimeoutRef.current) {
       clearTimeout(waitForCommandTimeoutRef.current);
@@ -169,7 +176,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
     let commandToInterpret = "";
 
     if (isWaitingForCommandAfterWakeWordRef.current) {
-      setIsWaitingForCommandAfterWakeWord(false); // Exiting waiting state
+      setIsWaitingForCommandAfterWakeWord(false);
       if (!fullTranscript.trim()) {
         const msg = `No command given after "${WAKE_WORD}". Try again.`;
         setFeedbackMessage(msg); setFeedbackType('info');
@@ -177,8 +184,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
         setCommandText(""); setIsProcessingCommand(false); return;
       }
       commandToInterpret = fullTranscript.trim();
-      // Set commandText only with the actual command part
-      setCommandText(commandToInterpret);
+      setCommandText(commandToInterpret); // Update input field with the command part
     } else if (lowerCaseTranscript.startsWith(WAKE_WORD.toLowerCase())) {
       const commandPartAfterWakeWord = fullTranscript.substring(WAKE_WORD.length).trim();
       if (!commandPartAfterWakeWord) {
@@ -187,7 +193,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
         // speak(`${WAKE_WORD}.`); // SILENCED
         setCommandText(""); // Clear text while waiting
         setIsWaitingForCommandAfterWakeWord(true);
-        setIsProcessingCommand(false); // Not "processing" Genkit yet
+        setIsProcessingCommand(false); // Not "processing" Genkit yet, just waiting for next voice input
         waitForCommandTimeoutRef.current = setTimeout(() => {
           if (isWaitingForCommandAfterWakeWordRef.current) { // Check if still waiting
             const timeoutMsg = `Timed out waiting for command after "${WAKE_WORD}". Please try again.`;
@@ -200,34 +206,31 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
         return; // Wait for next speech input or timeout
       }
       commandToInterpret = commandPartAfterWakeWord;
-      // Set commandText only with the actual command part
-      setCommandText(commandToInterpret);
+      setCommandText(commandToInterpret); // Update input field with the command part
     } else {
-      // Not starting with wake word, and not in "waiting for command" state
       const msg = `Please start your command with "${WAKE_WORD}". You said: "${fullTranscript}"`;
       setFeedbackMessage(msg); setFeedbackType('info');
       // speak(msg); // SILENCED
-      setCommandText(fullTranscript); // Show what was said
+      setCommandText(fullTranscript);
       setIsProcessingCommand(false); return;
     }
 
-    // From here, we have a commandToInterpret (or it's empty and we'll handle that)
     if (!commandToInterpret.trim()) {
         const msg = "No command to process. Please try again.";
         setFeedbackMessage(msg); setFeedbackType('info');
         // speak(msg); // SILENCED
-        setCommandText(""); // Ensure text input is cleared
+        setCommandText("");
         setIsProcessingCommand(false); return;
     }
 
-    setIsProcessingCommand(true);
-    setInterpretedResult(null); // Clear previous results
+    setIsProcessingCommand(true); // Now we are fully processing
+    setInterpretedResult(null);
     setFeedbackMessage(`Interpreting: "${commandToInterpret}"`); setFeedbackType('info');
 
     let genkitResponse: InterpretVoiceCommandOutput;
     try {
       genkitResponse = await interpretVoiceCommand({ voiceCommand: commandToInterpret });
-      setInterpretedResult({ ...genkitResponse }); // Store interpreted result
+      setInterpretedResult({ ...genkitResponse });
     } catch (error) {
       const msg = "Error: Could not interpret your command.";
       setFeedbackMessage(msg); setFeedbackType('error');
@@ -258,25 +261,21 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       toast({ title: "Device Not Found", description: `Could not find "${genkitResponse.device}".` , variant: "destructive"});
       setIsProcessingCommand(false); return;
     }
-    // Update interpretedResult with the found targetDevice for UI display
     setInterpretedResult({ ...genkitResponse, targetDevice });
 
     if (genkitResponse.intentType === 'query') {
       setFeedbackMessage(`Looking up information for ${targetDevice.name}...`); setFeedbackType('info');
 
-      // Refresh device state before speaking (optional, but good for freshness)
       if (onRefreshDeviceStates) {
-        await onRefreshDeviceStates([targetDevice.id]);
-        // Note: selectedDevices prop might not update instantly.
-        // For most accurate state, re-find targetDevice from a potentially updated list
-        // or rely on DeviceDisplay to update its own state, and VoiceControl just triggers refresh.
-        // For simplicity here, we'll assume onRefreshDeviceStates updates a shared source or
-        // the `selectedDevices` prop will be updated soon enough.
+        try {
+          await onRefreshDeviceStates([targetDevice.id]);
+        } catch (refreshError) {
+          console.error("Error refreshing device state for query:", refreshError);
+          // Optionally, inform user that state might be stale, but still proceed with speaking cached state
+        }
       }
-      // Re-find the device from the prop in case it was updated by onRefreshDeviceStates
+      
       const potentiallyUpdatedTargetDevice = selectedDevices.find(d => d.id === targetDevice.id) || targetDevice;
-
-
       let spokenResponse = "";
       const actionLower = genkitResponse.action.toLowerCase();
 
@@ -291,23 +290,21 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
             spokenResponse = `${sensorName} is currently ${state}${unit}.`;
         } else if (actionLower.includes("get humidity") || actionLower.includes("what is the humidity")) {
             spokenResponse = `${sensorName} is currently ${state}${unit}.`;
-        } else if (actionLower.includes("get status") || actionLower.includes("is") || actionLower.includes("what is")) { // Generic status query for a sensor
+        } else if (actionLower.includes("get status") || actionLower.includes("is") || actionLower.includes("what is")) {
             spokenResponse = `The ${sensorName} reading is ${state}${unit}.`;
         } else {
             spokenResponse = `The ${sensorName} is ${state}${unit}.`;
         }
 
-      } else { // Non-sensor devices (lights, switches, etc.)
+      } else {
         if (actionLower.includes("get status") || actionLower.includes("is") || actionLower.includes("what is")) {
            spokenResponse = `The ${potentiallyUpdatedTargetDevice.name} is currently ${potentiallyUpdatedTargetDevice.state}.`;
         } else {
-           // Fallback for other query types on non-sensors, if any were defined.
-           // For now, assumes "get status" is the main query for non-sensors.
            spokenResponse = `The status of ${potentiallyUpdatedTargetDevice.name} is ${potentiallyUpdatedTargetDevice.state}.`;
         }
       }
 
-      setFeedbackMessage(spokenResponse); setFeedbackType('success'); // Update UI feedback
+      setFeedbackMessage(spokenResponse); setFeedbackType('success');
       speak(spokenResponse); // SPEAK THE QUERY RESPONSE
       setIsProcessingCommand(false); return;
     }
@@ -351,7 +348,10 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
             setFeedbackMessage(msg); setFeedbackType('success');
             // speak(`Okay, ${genkitResponse.action.toLowerCase().replace("turn ", "")} ${targetDevice.name}.`); // SILENCED
             toast({ title: "Command Successful", description: `${targetDevice.name} was ${genkitResponse.action.toLowerCase()}.`});
-            if (onRefreshDeviceStates) setTimeout(() => onRefreshDeviceStates([targetDevice.id]), 1000); // Refresh state after action
+            if (onRefreshDeviceStates) {
+              // Slight delay to allow Home Assistant to update its state before re-querying
+              setTimeout(() => onRefreshDeviceStates([targetDevice.id]), 1000);
+            }
           } else {
             const msg = `Failed to execute: ${genkitResponse.action.toLowerCase()} ${targetDevice.name}. Bridge reported an issue.`;
             setFeedbackMessage(msg); setFeedbackType('error');
@@ -367,32 +367,29 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
           setIsProcessingCommand(false);
         }
     } else {
-        // Should not happen if Genkit schema is well-defined
         setFeedbackMessage(`Unknown intent type: ${genkitResponse.intentType}`); setFeedbackType('error');
         // speak("I'm not sure what to do with that command."); // SILENCED
         setIsProcessingCommand(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast, selectedDevices, speak, onRefreshDeviceStates]); // Added speak and onRefreshDeviceStates to deps
+  }, [toast, selectedDevices, speak, onRefreshDeviceStates]);
 
   useEffect(() => {
     const currentRecognition = recognitionRef.current;
     if (!currentRecognition || !speechRecognitionApiAvailable) return;
 
     currentRecognition.onresult = (event: any) => {
-      // Check if processing another command OR waiting for command part, to avoid premature new command processing
       if (isProcessingCommandRef.current && !isWaitingForCommandAfterWakeWordRef.current) {
         console.log("Speech result ignored: processing another command.");
         return;
       }
       const transcript = event.results[event.results.length - 1][0].transcript.trim();
-      // Do not setCommandText here; handleInterpretAndExecuteCommand will do it.
       handleInterpretAndExecuteCommand(transcript);
     };
 
     currentRecognition.onerror = (event: any) => {
       console.error('Speech recognition error:', event.error, event.message);
-      setMicActuallyActive(false); // Mic is no longer active on error
+      setMicActuallyActive(false);
       let newMicPermissionError = micPermissionError;
 
       if (isWaitingForCommandAfterWakeWordRef.current) {
@@ -402,16 +399,14 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
 
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         newMicPermissionError = "Microphone access denied. Please enable it in your browser settings.";
-        setUserDesiredListening(false); // Stop trying if permission is denied
+        setUserDesiredListening(false);
       } else if (event.error === 'audio-capture') {
         newMicPermissionError = "Audio capture failed. Please check your microphone.";
-        setUserDesiredListening(false); // Stop trying if mic hardware fails
+        setUserDesiredListening(false);
       } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
-        // Don't show errors for "no-speech" or if we programmatically aborted.
-        newMicPermissionError = `Voice recognition error: ${event.error}.`;
+        newMicPermissionError = `Voice recognition error: ${event.error}. Try refreshing.`;
       }
       setMicPermissionError(newMicPermissionError);
-      // Only toast for new, significant errors to avoid spamming
       if (newMicPermissionError && (micPermissionError !== newMicPermissionError || event.error === 'network')) {
         toast({ title: "Voice Error", description: newMicPermissionError || event.message || event.error, variant: "destructive" });
       }
@@ -419,67 +414,67 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
 
     currentRecognition.onstart = () => {
       setMicActuallyActive(true);
-      setMicPermissionError(null); // Clear previous errors on successful start
+      setMicPermissionError(null);
     };
 
     currentRecognition.onend = () => {
       setMicActuallyActive(false);
-      // Auto-restart logic: only if user desires listening, API is available, no permission errors,
-      // and not currently processing a command (unless it's waiting for the command part after wake word)
       if (userDesiredListening && speechRecognitionApiAvailable && !micPermissionError &&
           (!isProcessingCommandRef.current || isWaitingForCommandAfterWakeWordRef.current) ) {
         try {
-          // Short delay before restarting to prevent rapid-fire restarts on some errors
+          // Reduced timeout to make restart quicker
           setTimeout(() => {
-            // Re-check conditions before starting, in case state changed during timeout
             if (userDesiredListening && recognitionRef.current && !micActuallyActive && !micPermissionError &&
                 (!isProcessingCommandRef.current || isWaitingForCommandAfterWakeWordRef.current) ) {
-              recognitionRef.current.start();
+              try {
+                recognitionRef.current.start();
+              } catch (startError: any) {
+                 if (startError.name !== 'InvalidStateError') { // Ignore if already started
+                    console.error("Error restarting recognition in onend timeout:", startError);
+                    setMicPermissionError("Failed to restart voice recognition after it ended.");
+                    setUserDesiredListening(false);
+                 }
+              }
             }
-          }, 250); // 250ms delay
+          }, 10); // Reduced delay from 250ms to 10ms
         } catch (e: any) {
-          // Catch errors like "recognition already started" or other invalid states
-          if (e.name !== 'InvalidStateError') { // Ignore if it's just an invalid state (e.g., already started)
-            console.error("Error restarting recognition:", e);
-            setMicPermissionError("Failed to restart voice recognition.");
-            setUserDesiredListening(false); // Stop trying if restart fails critically
+          if (e.name !== 'InvalidStateError') {
+            console.error("Error queueing restart recognition:", e);
+            setMicPermissionError("Failed to queue restart of voice recognition.");
+            setUserDesiredListening(false);
           }
         }
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [speechRecognitionApiAvailable, userDesiredListening, handleInterpretAndExecuteCommand, toast]); // Removed micPermissionError from deps
+  }, [speechRecognitionApiAvailable, userDesiredListening, handleInterpretAndExecuteCommand, toast]);
 
 
-  // Effect to manage starting/stopping recognition based on user desire and other states
   useEffect(() => {
     if (!speechRecognitionApiAvailable || !recognitionRef.current) return;
 
-    // If processing a command AND NOT waiting for the command part, ensure mic is stopped.
     if (isProcessingCommandRef.current && !isWaitingForCommandAfterWakeWordRef.current) {
         if(micActuallyActive) {
-            try { recognitionRef.current.stop(); } catch(e) { /* ignore */ }
+            try { recognitionRef.current.stop(); } catch(e) {}
         }
-        return; // Don't proceed to start/stop logic if processing fully
+        return;
     }
 
-    // If user wants to listen, mic is not active, and no permission errors: START
     if (userDesiredListening && !micActuallyActive && !micPermissionError) {
       try {
         recognitionRef.current.start();
       } catch (e: any) {
-        if (e.name !== 'InvalidStateError') { // Ignore if already started
+        if (e.name !== 'InvalidStateError') {
           console.error("Error starting recognition in effect:", e);
-          setMicPermissionError("Could not start microphone.");
-          setUserDesiredListening(false); // Give up if start fails
+          setMicPermissionError("Could not start microphone. Try refreshing or check permissions.");
+          setUserDesiredListening(false);
         }
       }
     }
-    // If user does NOT want to listen and mic IS active: STOP
     else if (!userDesiredListening && micActuallyActive) {
       try {
         recognitionRef.current.stop();
-        if (isWaitingForCommandAfterWakeWordRef.current) { // If stopped while waiting for command
+        if (isWaitingForCommandAfterWakeWordRef.current) {
             setIsWaitingForCommandAfterWakeWord(false);
             if(waitForCommandTimeoutRef.current) clearTimeout(waitForCommandTimeoutRef.current);
         }
@@ -488,7 +483,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userDesiredListening, micActuallyActive, speechRecognitionApiAvailable, micPermissionError]); // isProcessingCommandRef is handled by ref, not in deps
+  }, [userDesiredListening, micActuallyActive, speechRecognitionApiAvailable, micPermissionError]);
 
   const handleMicButtonClick = () => {
     if (!speechRecognitionApiAvailable) {
@@ -496,35 +491,31 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       return;
     }
     if (micPermissionError && !micActuallyActive) {
-        // If there's a permission error and mic is off, try resetting to allow another attempt
-        setMicPermissionError(null);
+        setMicPermissionError(null); // Attempt to clear error to allow re-try
     }
     if (isWaitingForCommandAfterWakeWordRef.current) {
-        // If user clicks mic while waiting for command after "Jarvis"
         setIsWaitingForCommandAfterWakeWord(false);
         if(waitForCommandTimeoutRef.current) clearTimeout(waitForCommandTimeoutRef.current);
         const msg = "Command cancelled.";
         setFeedbackMessage(msg); setFeedbackType("info");
         // speak(msg); // SILENCED
     }
-    setUserDesiredListening(prev => !prev); // Toggle listening state
+    setUserDesiredListening(prev => !prev);
   };
 
   const handleSubmitTextCommand = (event: FormEvent) => {
     event.preventDefault();
     if (isProcessingCommandRef.current || !commandText.trim()) return;
-    // Clear any "waiting for command" state if text is submitted
     if (isWaitingForCommandAfterWakeWordRef.current) {
         setIsWaitingForCommandAfterWakeWord(false);
         if(waitForCommandTimeoutRef.current) clearTimeout(waitForCommandTimeoutRef.current);
     }
-    // Prepend wake word for typed commands to match voice flow for Genkit
     handleInterpretAndExecuteCommand(`${WAKE_WORD} ${commandText}`);
   };
 
   const getDeviceIcon = (device?: Device) => {
     if (device?.icon) return <device.icon className="h-5 w-5" />;
-    if (!device?.type) return <HelpCircle className="h-5 w-5" />; // Default if type is missing
+    if (!device?.type) return <HelpCircle className="h-5 w-5" />;
     const typeLower = device.type.toLowerCase();
     if (typeLower.includes("light")) return <Lightbulb className="h-5 w-5" />;
     if (typeLower.includes("thermostat") || (typeLower.includes("temp") && typeLower.includes("sensor"))) return <Thermometer className="h-5 w-5" />;
@@ -533,11 +524,10 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
     if (typeLower.includes("lock")) return <Lock className="h-5 w-5" />;
     if (typeLower.includes("fan")) return <Wind className="h-5 w-5" />;
     if (typeLower.includes("switch") || typeLower.includes("outlet")) return <Power className="h-5 w-5" />;
-    if (typeLower.includes("sensor")) return <Info className="h-5 w-5" />; // Generic sensor
-    return <HelpCircle className="h-5 w-5" />; // Fallback for unknown types
+    if (typeLower.includes("sensor")) return <Info className="h-5 w-5" />;
+    return <HelpCircle className="h-5 w-5" />;
   };
 
-  // Determine the UI feedback message
   const currentUiFeedback =
     isWaitingForCommandAfterWakeWord ? `"${WAKE_WORD}" detected. Waiting for command...`
     : micPermissionError ? `Mic Error: ${micPermissionError}`
@@ -551,7 +541,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       case 'error': return <XCircle className="h-5 w-5 text-red-400" />;
       case 'info': return <Info className="h-5 w-5 text-blue-400" />;
       case 'speaking': return <Volume2 className="h-5 w-5 text-purple-400" />;
-      default: return <Info className="h-5 w-5 text-blue-400" />; // Default icon
+      default: return <Info className="h-5 w-5 text-blue-400" />;
     }
   };
   const feedbackTitle = () => {
@@ -560,7 +550,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       case 'error': return 'Error';
       case 'info': return 'Information';
       case 'speaking': return 'Speaking';
-      default: return 'Status'; // Default title
+      default: return 'Status';
     }
   };
 
@@ -579,7 +569,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
             <Button onClick={handleMicButtonClick} variant={userDesiredListening && micActuallyActive ? "destructive" : "outline"} size="lg"
               className={`p-4 rounded-full transition-all duration-300 ease-in-out transform hover:scale-105 ${userDesiredListening && micActuallyActive ? 'animate-pulse bg-accent/30 border-accent' : 'border-primary/50'}`}
               aria-label={userDesiredListening ? "Stop listening" : "Start listening"}
-              disabled={!speechRecognitionApiAvailable || (isProcessingCommand && !isWaitingForCommandAfterWakeWord)} // Disable if processing full command
+              disabled={!speechRecognitionApiAvailable || (isProcessingCommand && !isWaitingForCommandAfterWakeWord)}
               title={!speechRecognitionApiAvailable ? "Voice recognition not available" : (userDesiredListening ? "Stop listening" : "Start listening")}>
               {userDesiredListening && micActuallyActive ? <MicOff className="h-8 w-8 text-destructive-foreground" /> : <Mic className={`h-8 w-8 ${micPermissionError ? 'text-destructive' : 'text-primary'}`} />}
             </Button>
@@ -587,7 +577,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
               <Input type="text"
                 placeholder={micActuallyActive ? `Say "${WAKE_WORD}" or type command` : (speechRecognitionApiAvailable ? `Type command (e.g. turn on light)` : "Type command (voice N/A)")}
                 value={commandText} onChange={(e) => setCommandText(e.target.value)}
-                disabled={isProcessingCommand && !isWaitingForCommandAfterWakeWord} // Disable if processing full command
+                disabled={isProcessingCommand && !isWaitingForCommandAfterWakeWord}
                 className="flex-grow text-lg p-3 bg-input/50 border-border focus:ring-accent" />
               <Button type="submit" size="lg" disabled={isProcessingCommand || !commandText.trim()} className="bg-primary hover:bg-primary/80">
                 {(isProcessingCommand && !isWaitingForCommandAfterWakeWord) ? <Loader2 className="h-6 w-6 animate-spin" /> : <Send className="h-6 w-6" />}
@@ -595,7 +585,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
             </form>
           </div>
 
-          {(isProcessingCommand && !isWaitingForCommandAfterWakeWord && !feedbackMessage && !interpretedResult) && ( // Show generic processing only if no specific feedback yet
+          {(isProcessingCommand && !isWaitingForCommandAfterWakeWord && !feedbackMessage && !interpretedResult) && (
             <div className="flex justify-center items-center p-4"><Loader2 className="h-12 w-12 animate-spin text-accent" /><p className="ml-3 text-lg text-muted-foreground">Processing...</p></div>
           )}
 
@@ -612,18 +602,18 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
             </Card>
           )}
 
-          {feedbackMessage && feedbackType && ( // Display feedback messages from state
+          {feedbackMessage && feedbackType && (
              <Alert variant={feedbackType === 'error' ? 'destructive' : 'default'}
                 className={`mt-6 ${
                   feedbackType === 'success' ? 'border-green-500/50 bg-green-900/20 text-green-300'
-                  : feedbackType === 'error' ? 'border-destructive/50 text-destructive-foreground' // Uses default destructive style
+                  : feedbackType === 'error' ? 'border-destructive/50 text-destructive-foreground'
                   : feedbackType === 'speaking' ? 'border-purple-500/50 bg-purple-900/20 text-purple-300'
-                  : 'border-blue-500/50 bg-blue-900/20 text-blue-300' // Default to info style
+                  : 'border-blue-500/50 bg-blue-900/20 text-blue-300'
                 }`}>
               {feedbackIcon()}
               <AlertTitle className={`ml-2 ${
                   feedbackType === 'success' ? 'text-green-200'
-                  : feedbackType === 'error' ? 'text-red-200' // Matching destructive alert title color
+                  : feedbackType === 'error' ? 'text-red-200' 
                   : feedbackType === 'speaking' ? 'text-purple-200'
                   : 'text-blue-200'
                 }`}>
@@ -664,4 +654,3 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
     </div>
   );
 }
-
