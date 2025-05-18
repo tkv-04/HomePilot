@@ -29,9 +29,11 @@ interface VoiceControlProps {
   selectedDevices: Device[];
 }
 
+const WAKE_WORD = "jarvis";
+
 export function VoiceControl({ selectedDevices }: VoiceControlProps) {
   const [commandText, setCommandText] = useState("");
-  const [isProcessingCommand, setIsProcessingCommand] = useState(false); // Renamed from isLoading for clarity
+  const [isProcessingCommand, setIsProcessingCommand] = useState(false);
   const [interpretedResult, setInterpretedResult] = useState<InterpretVoiceCommandOutput & { targetDevice?: Device } | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [feedbackType, setFeedbackType] = useState<'success' | 'error' | 'info' | null>(null);
@@ -46,7 +48,7 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
       const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
       recognitionRef.current = new SpeechRecognitionAPI();
       if (recognitionRef.current) {
-        recognitionRef.current.continuous = false;
+        recognitionRef.current.continuous = false; // Important: process discrete phrases
         recognitionRef.current.lang = 'en-US';
         recognitionRef.current.interimResults = false;
         recognitionRef.current.maxAlternatives = 1;
@@ -58,8 +60,8 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
     }
   }, []);
 
-  const handleInterpretAndExecuteCommand = useCallback(async (commandToInterpret: string) => {
-    if (!commandToInterpret.trim()) {
+  const handleInterpretAndExecuteCommand = useCallback(async (fullTranscript: string) => {
+    if (!fullTranscript.trim()) {
       toast({ title: "Empty Command", description: "Please enter or say a command.", variant: "destructive" });
       setIsListening(false);
       return;
@@ -67,14 +69,49 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
 
     setIsProcessingCommand(true);
     setInterpretedResult(null);
-    setFeedbackMessage("Interpreting your command...");
+    setFeedbackMessage("Processing...");
     setFeedbackType('info');
+
+    const lowerCaseTranscript = fullTranscript.toLowerCase();
+    let commandToInterpret = "";
+
+    if (lowerCaseTranscript.startsWith(WAKE_WORD.toLowerCase() + " ")) {
+      commandToInterpret = fullTranscript.substring(WAKE_WORD.length + 1).trim();
+    } else {
+      setFeedbackMessage(`Wake word "${WAKE_WORD}" not detected. Please start your command with "${WAKE_WORD}".`);
+      setFeedbackType('error');
+      toast({
+        title: "Wake Word Not Detected",
+        description: `Please say "${WAKE_WORD}" before your command.`,
+        variant: "destructive",
+      });
+      setIsProcessingCommand(false);
+      setIsListening(false);
+      return;
+    }
+
+    if (!commandToInterpret) {
+      setFeedbackMessage(`No command detected after "${WAKE_WORD}".`);
+      setFeedbackType('error');
+       toast({
+        title: "No Command",
+        description: `Please provide a command after saying "${WAKE_WORD}".`,
+        variant: "destructive",
+      });
+      setIsProcessingCommand(false);
+      setIsListening(false);
+      return;
+    }
+    
+    setCommandText(commandToInterpret); // Update input field with actual command
+    setFeedbackMessage(`Interpreting: "${commandToInterpret}"`);
+
 
     let genkitResponse: InterpretVoiceCommandOutput;
     try {
       const input: InterpretVoiceCommandInput = { voiceCommand: commandToInterpret };
       genkitResponse = await interpretVoiceCommand(input);
-      setInterpretedResult({ ...genkitResponse }); // Store initial interpretation
+      setInterpretedResult({ ...genkitResponse });
     } catch (error) {
       console.error("Failed to interpret command:", error);
       setFeedbackMessage("Error: Could not interpret your command.");
@@ -89,7 +126,6 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
       return;
     }
 
-    // Now try to match and execute
     if (selectedDevices.length === 0) {
       setFeedbackMessage("No devices selected on your dashboard to control.");
       setFeedbackType('info');
@@ -115,7 +151,6 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
     
     setInterpretedResult({ ...genkitResponse, targetDevice });
 
-
     const actionLower = genkitResponse.action.toLowerCase();
     let apiCommand = '';
     let apiParams: Record<string, any> = {};
@@ -135,7 +170,6 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
       return;
     }
 
-    // Check if device type supports OnOff (basic check)
     if (targetDevice.type !== 'light' && targetDevice.type !== 'switch' && targetDevice.type !== 'fan' && targetDevice.type !== 'outlet') {
         setFeedbackMessage(`Device type "${targetDevice.type}" does not support On/Off commands through voice control currently.`);
         setFeedbackType('info');
@@ -153,7 +187,6 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
       return;
     }
 
-
     setFeedbackMessage(`Attempting to ${genkitResponse.action.toLowerCase()} ${targetDevice.name}...`);
     setFeedbackType('info');
 
@@ -166,8 +199,6 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
           title: "Command Successful",
           description: `${targetDevice.name} was ${genkitResponse.action.toLowerCase()}. The dashboard will update shortly.`,
         });
-        // Note: DeviceDisplay will update its state based on its own logic (polling/manual interaction).
-        // For immediate UI update, DashboardPage would need to manage device state and pass update callbacks.
       } else {
         setFeedbackMessage(`Failed to ${genkitResponse.action.toLowerCase()} ${targetDevice.name}. The bridge reported an issue.`);
         setFeedbackType('error');
@@ -190,18 +221,26 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
 
     const handleResult = (event: any) => {
       const transcript = event.results[event.results.length - 1][0].transcript.trim();
-      setCommandText(transcript);
+      // Set commandText to the full transcript initially, handleInterpretAndExecuteCommand will parse it.
+      setCommandText(transcript); 
       handleInterpretAndExecuteCommand(transcript); 
     };
     const handleError = (event: any) => {
       console.error('Speech recognition error', event.error);
-      if (event.error !== 'no-speech') { // Avoid toast for no speech if user just clicks mic and stays silent
-        toast({
-          title: "Voice Error",
-          description: `Error: ${event.error}. Try typing.`,
-          variant: "destructive",
-        });
+      let errorMessage = `Error: ${event.error}. Try typing.`;
+      if (event.error === 'no-speech') {
+         errorMessage = "No speech detected. Please try again.";
+      } else if (event.error === 'audio-capture') {
+         errorMessage = "Audio capture failed. Check microphone permissions.";
+      } else if (event.error === 'not-allowed') {
+         errorMessage = "Microphone access denied. Please allow microphone access.";
       }
+      
+      toast({
+        title: "Voice Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
       setIsListening(false);
     };
     const handleEnd = () => setIsListening(false);
@@ -230,14 +269,14 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
       try { currentRecognition.stop(); } catch (e) {}
       setIsListening(false);
     } else {
-      setCommandText("");
+      setCommandText(""); // Clear previous command text
       setInterpretedResult(null);
       setFeedbackMessage(null);
       setFeedbackType(null);
       try {
         currentRecognition.start();
         setIsListening(true);
-        toast({ title: "Listening...", description: "Speak your command." });
+        toast({ title: "Listening...", description: `Say "${WAKE_WORD}" followed by your command.` });
       } catch (e) {
         console.error("Error starting speech recognition:", e);
         toast({ title: "Mic Error", description: "Could not start voice recognition. Check permissions.", variant: "destructive" });
@@ -248,7 +287,9 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
   
   const handleSubmitTextCommand = (event: FormEvent) => {
     event.preventDefault();
-    handleInterpretAndExecuteCommand(commandText);
+    // For typed commands, we prepend "Jarvis " to make it consistent with voice flow
+    // or we can have a separate logic path if we want typed commands to not need "Jarvis"
+    handleInterpretAndExecuteCommand(`${WAKE_WORD} ${commandText}`);
   };
   
   const getDeviceIcon = (device?: Device) => {
@@ -256,15 +297,15 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
       const IconComponent = device.icon;
       return <IconComponent className="h-5 w-5" />;
     }
-    if (!device || !device.type) return <Lightbulb className="h-5 w-5" />; // Default if no device type
+    if (!device || !device.type) return <Lightbulb className="h-5 w-5" />;
     
     const typeLower = device.type.toLowerCase();
     if (typeLower.includes("light")) return <Lightbulb className="h-5 w-5" />;
-    if (typeLower.includes("thermostat") || typeLower.includes("temp") || typeLower.includes("sensor")) return <Thermometer className="h-5 w-5" />; // Group sensors with thermo for now
+    if (typeLower.includes("thermostat") || typeLower.includes("temp") || typeLower.includes("sensor")) return <Thermometer className="h-5 w-5" />;
     if (typeLower.includes("tv")) return <Tv2 className="h-5 w-5" />;
     if (typeLower.includes("lock")) return <Lock className="h-5 w-5" />;
-    if (typeLower.includes("fan")) return <Lock className="h-5 w-5" />; // Fan icon
-    if (typeLower.includes("switch") || typeLower.includes("outlet")) return <Lock className="h-5 w-5" />; // Power/Outlet icon
+    if (typeLower.includes("fan")) return <Lock className="h-5 w-5" />;
+    if (typeLower.includes("switch") || typeLower.includes("outlet")) return <Lock className="h-5 w-5" />;
     return <Lightbulb className="h-5 w-5" />;
   };
 
@@ -282,15 +323,16 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
               variant={isListening ? "destructive" : "outline"} 
               size="lg"
               className={`p-4 rounded-full transition-all duration-300 ease-in-out transform hover:scale-105 ${isListening ? 'animate-pulse bg-accent/30 border-accent' : 'border-primary/50'}`}
-              aria-label={isListening ? "Stop listening" : "Start listening"}
+              aria-label={isListening ? "Stop listening" : `Start listening (say "${WAKE_WORD}" first)`}
               disabled={!speechApiAvailable || isProcessingCommand}
+              title={speechApiAvailable ? (isListening ? "Stop listening" : `Start listening - say "${WAKE_WORD}" then your command`) : "Voice recognition not available"}
             >
               <Mic className={`h-8 w-8 ${isListening ? 'text-destructive-foreground' : 'text-primary'}`} />
             </Button>
             <form onSubmit={handleSubmitTextCommand} className="flex-grow flex items-center space-x-2">
               <Input
                 type="text"
-                placeholder={isListening ? "Listening..." : speechApiAvailable ? "Or type, e.g., 'Turn on living room light'" : "Type command (voice not available)"}
+                placeholder={isListening ? "Listening..." : speechApiAvailable ? `Type command, e.g., 'Turn on living room light'` : "Type command (voice not available)"}
                 value={commandText}
                 onChange={(e) => setCommandText(e.target.value)}
                 disabled={isProcessingCommand || isListening}
@@ -302,7 +344,7 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
             </form>
           </div>
 
-          {isProcessingCommand && !isListening && !feedbackMessage && ( // Show generic processing only if no specific feedback
+          {isProcessingCommand && !isListening && !feedbackMessage && (
             <div className="flex justify-center items-center p-4">
               <Loader2 className="h-12 w-12 animate-spin text-accent" />
               <p className="ml-3 text-lg text-muted-foreground">Processing command...</p>
@@ -333,7 +375,7 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
              >
               {feedbackType === 'success' ? <CheckCircle2 className="h-5 w-5 text-green-500" /> : 
                (feedbackType === 'error' ? <XCircle className="h-5 w-5 text-red-500" /> : 
-               <AlertTriangle className="h-5 w-5 text-blue-500" />) // Using AlertTriangle for info
+               <AlertTriangle className="h-5 w-5 text-blue-500" />)
               }
               <AlertTitle className={`ml-2 ${feedbackType === 'success' ? 'text-green-400' : (feedbackType === 'error' ? 'text-red-400' : 'text-blue-400')}`}>
                 {feedbackType === 'success' ? 'Success' : (feedbackType === 'error' ? 'Error' : 'Information')}
@@ -344,17 +386,22 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
         </CardContent>
         <CardFooter className="text-center">
           <p className="text-xs text-muted-foreground">
-            Voice commands will attempt to control devices on your dashboard. Dashboard display updates separately.
+            After clicking the mic, say "{WAKE_WORD}" then your command. Dashboard display updates separately.
           </p>
         </CardFooter>
       </Card>
 
       <div className="w-full max-w-2xl p-4 bg-card/50 rounded-lg shadow">
-        <h3 className="text-lg font-semibold mb-2 text-center text-foreground">Example Commands</h3>
+        <h3 className="text-lg font-semibold mb-2 text-center text-foreground">Example Voice Commands</h3>
         <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground text-center">
-          <li>"Turn on the kitchen lights"</li>
+          <li>"{WAKE_WORD} turn on the kitchen lights"</li>
+          <li>"{WAKE_WORD} turn off the fan"</li>
+          <li>"{WAKE_WORD} activate the main light"</li>
+        </ul>
+         <h3 className="text-lg font-semibold mt-4 mb-2 text-center text-foreground">Example Typed Commands</h3>
+        <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground text-center">
+          <li>"Turn on the kitchen lights" (type this, "{WAKE_WORD}" will be prepended automatically)</li>
           <li>"Turn off the fan"</li>
-          <li>"Activate the main light"</li>
         </ul>
       </div>
     </div>
