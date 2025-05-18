@@ -3,7 +3,7 @@
 /**
  * @fileOverview This file defines a Genkit flow to interpret voice commands for home automation
  * or general conversation. It can understand single queries, multiple actions on devices, or
- * respond to general chitchat.
+ * respond to general chitchat, including telling the time.
  *
  * - interpretVoiceCommand - A function that takes a voice command as input and returns an
  *   actionable command, query for Home Assistant, or a general conversational response.
@@ -13,6 +13,7 @@
 
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
+import {getCurrentTimeTool} from '@/ai/tools/get-current-time-tool'; // Import the new tool
 
 const InterpretVoiceCommandInputSchema = z.object({
   voiceCommand: z.string().describe('The voice command to interpret.'),
@@ -32,7 +33,7 @@ const InterpretVoiceCommandOutputSchema = z.object({
   queryTarget: z.string().optional().describe('The target device or topic for the query (e.g., "kitchen light", "living room temperature sensor"). Used when intentType is "query".'),
   queryType: z.string().optional().describe('The type of information requested (e.g.,"get temperature", "get status", "is on"). Used when intentType is "query". Make this concise.'),
   suggestedConfirmation: z.string().optional().describe('A polite, natural language phrase confirming the understood command if it is an "action" or "query". e.g., "Okay, turning on the kitchen light." or "Let me check that for you." This field should NOT be populated if intentType is "general".'),
-  generalResponse: z.string().optional().describe('A conversational response if the command is not a home automation action or query (i.e., intentType is "general").'),
+  generalResponse: z.string().optional().describe('A conversational response if the command is not a home automation action or query (i.e., intentType is "general"). This can include answers to questions like "what time is it?".'),
 });
 
 export type InterpretVoiceCommandOutput = z.infer<
@@ -49,6 +50,7 @@ const prompt = ai.definePrompt({
   name: 'interpretVoiceCommandPrompt',
   input: {schema: InterpretVoiceCommandInputSchema},
   output: {schema: InterpretVoiceCommandOutputSchema},
+  tools: [getCurrentTimeTool], // Make the tool available to the prompt
   prompt: `You are a helpful AI assistant that interprets voice commands for home automation AND can hold a general conversation.
 Your primary task is to determine if the command is for home automation (ACTION or QUERY) or if it's a GENERAL conversational input.
 
@@ -69,11 +71,12 @@ Given a voice command:
     - You can optionally provide a short phrase in 'suggestedConfirmation' like "Let me check that for you." or "Looking up the status of the fan."
     - Do NOT populate 'generalResponse'.
 
-4.  If the command is NOT clearly a home automation action or query (e.g., it's a greeting, a general question, a request for a joke, etc.):
+4.  If the command is NOT clearly a home automation action or query (e.g., it's a greeting, a general question like "what time is it?", a request for a joke, etc.):
     - Set 'intentType' to 'general'.
+    - If the user asks for the current time, use the 'getCurrentTime' tool to get the time and include it in your response.
     - Formulate a helpful, friendly, and conversational response to the user's input. Store this in the 'generalResponse' field.
     - Do NOT populate 'actions', 'queryTarget', 'queryType', or 'suggestedConfirmation'.
-    - If you cannot fulfill a general request (e.g., "What's the weather?"), you can state your current limitations politely.
+    - If you cannot fulfill a general request (e.g., "What's the weather?" and you don't have a weather tool), you can state your current limitations politely.
 
 Examples:
   - Voice Command: "Jarvis, turn on the kitchen light and turn off the living room fan"
@@ -84,6 +87,9 @@ Examples:
     -> intentType: "general", generalResponse: "Hello! How can I assist you with your smart home today?"
   - Voice Command: "Jarvis, tell me a joke"
     -> intentType: "general", generalResponse: "Why did the scarecrow win an award? Because he was outstanding in his field!"
+  - Voice Command: "Jarvis, what time is it?"
+    -> (AI uses getCurrentTime tool, gets e.g., "3:45 PM")
+    -> intentType: "general", generalResponse: "The current time is 3:45 PM."
   - Voice Command: "Jarvis, what is the capital of France?"
     -> intentType: "general", generalResponse: "The capital of France is Paris. Is there anything home-related I can help with?"
 
