@@ -192,7 +192,6 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       commandToInterpret = commandPartAfterWakeWord;
     } else {
       // If wake word not detected, and not in "waiting" state, just ignore.
-      // Or provide a subtle hint if needed, but for now, let's keep it less intrusive.
       setCommandText(fullTranscript); // Show what was heard, but don't process
       setIsProcessingCommand(false); return;
     }
