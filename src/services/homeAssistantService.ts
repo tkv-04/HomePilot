@@ -3,7 +3,7 @@
 import type { Device } from '@/types/home-assistant';
 import { Lightbulb, Power, Wind, Zap, HelpCircle, Thermometer, Droplets, Tv } from 'lucide-react';
 
-const SMART_HOME_API_URL = 'https://smarthome.tkv.in.net/smarthome'; // Base URL for all intents
+const SMART_HOME_API_URL = 'https://smarthome.tkv.in.net/smarthome'; 
 
 // Helper to generate a unique request ID (simple version)
 const generateRequestId = (): string => {
@@ -13,7 +13,10 @@ const generateRequestId = (): string => {
 // Maps Google Device Types to internal app types and Lucide icons
 const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
   let appType: Device['type'] = 'unknown';
-  let icon: React.ElementType = HelpCircle; // Fallback to HelpCircle
+  let icon: React.ElementType = HelpCircle; 
+  let deviceSpecificAttributes: Device['attributes'] = {
+    googleDeviceType: googleDevice.type,
+  };
 
   switch (googleDevice.type) {
     case 'action.devices.types.LIGHT':
@@ -32,31 +35,39 @@ const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
       appType = 'fan';
       icon = Wind;
       break;
-    // Add more mappings as needed for other device types your bridge supports
-    // For example, if your bridge supports thermostats:
-    // case 'action.devices.types.THERMOSTAT':
-    //   appType = 'climate'; // or 'thermostat' if you prefer
-    //   icon = Thermometer;
-    //   break;
+    case 'action.devices.types.SENSOR':
+      appType = 'sensor';
+      icon = HelpCircle; // Default for sensors
+      let unit = '';
+      if (googleDevice.attributes && googleDevice.attributes.sensorStatesSupported && googleDevice.attributes.sensorStatesSupported.length > 0) {
+        // Using the first supported state to determine icon/unit for simplicity
+        const sensorStateInfo = googleDevice.attributes.sensorStatesSupported[0];
+        if (sensorStateInfo.name === 'temperature') {
+          icon = Thermometer;
+          unit = sensorStateInfo.unit || '°'; 
+        } else if (sensorStateInfo.name === 'humidity') {
+          icon = Droplets;
+          unit = sensorStateInfo.unit || '%';
+        }
+        // for binary sensors or other sensors, it will keep HelpCircle and no unit
+      }
+      deviceSpecificAttributes.unit_of_measurement = unit;
+      // deviceSpecificAttributes.sensorStatesSupported = googleDevice.attributes?.sensorStatesSupported; // Optionally store all supported states
+      break;
     default:
       appType = 'unknown';
-      // Use a more generic icon for unknown types if not a specific category
-      icon = Zap; // Or keep HelpCircle if that's preferred for all unknown
+      icon = Zap; 
   }
   return {
     type: appType,
     icon: icon,
-    attributes: {
-      googleDeviceType: googleDevice.type,
-      // store other relevant attributes from googleDevice.attributes if any
-    },
+    attributes: deviceSpecificAttributes,
   };
 };
 
 // Fetches the list of devices from your bridge (SYNC intent)
 export const fetchDevicesFromApi = async (): Promise<Device[]> => {
   try {
-    // SYNC request goes to the base SMART_HOME_API_URL
     const response = await fetch(SMART_HOME_API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -79,20 +90,20 @@ export const fetchDevicesFromApi = async (): Promise<Device[]> => {
     }
     
     return data.payload.devices.map((d: any): Device => {
-      const mappedType = mapGoogleTypeToAppDevice(d);
+      const mappedTypeAndAttributes = mapGoogleTypeToAppDevice(d);
       return {
-        id: d.id, // entity_id
+        id: d.id, 
         name: d.name?.name || d.id,
-        type: mappedType.type || 'unknown',
-        state: 'unknown', // Initial state, will be updated by QUERY
-        online: false, // Initial state, will be updated by QUERY
-        icon: mappedType.icon,
-        attributes: { ...mappedType.attributes },
+        type: mappedTypeAndAttributes.type || 'unknown',
+        state: 'unknown', 
+        online: false, 
+        icon: mappedTypeAndAttributes.icon,
+        attributes: { ...mappedTypeAndAttributes.attributes },
       };
     });
   } catch (error) {
     console.error('Error in fetchDevicesFromApi:', error);
-    throw error; // Re-throw to be caught by UI
+    throw error; 
   }
 };
 
@@ -100,7 +111,7 @@ export const fetchDevicesFromApi = async (): Promise<Device[]> => {
 export const queryDeviceStatesFromApi = async (deviceIds: string[]): Promise<Record<string, { state: 'on' | 'off' | 'unknown' | string | number | boolean; online: boolean }>> => {
   if (deviceIds.length === 0) return {};
   try {
-    const response = await fetch(SMART_HOME_API_URL, { // Uses the base URL
+    const response = await fetch(SMART_HOME_API_URL, { 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -128,15 +139,14 @@ export const queryDeviceStatesFromApi = async (deviceIds: string[]): Promise<Rec
     const deviceStates: Record<string, { state: 'on' | 'off' | 'unknown' | string | number | boolean; online: boolean }> = {};
     for (const deviceId in data.payload.devices) {
       const deviceData = data.payload.devices[deviceId];
-      // Adapt based on how your bridge reports state for different devices
       let stateValue: 'on' | 'off' | 'unknown' | string | number | boolean = 'unknown';
-      if (deviceData.on !== undefined) { // For OnOff trait
+      
+      // Based on your bridge, it returns an 'on' property for state.
+      if (deviceData.on !== undefined) { 
         stateValue = deviceData.on ? 'on' : 'off';
-      } else if (deviceData.status !== undefined) { // General status
-         stateValue = deviceData.status;
       } else {
-        // Fallback or handle other device types if your bridge returns different state structures
-        // For now, we'll keep it simple and expect 'on' or a generic 'state'
+        // If your bridge were to return other state properties for sensors, handle them here.
+        // For now, it seems to only provide 'on', so other sensors might appear 'off' or 'unknown'.
       }
       deviceStates[deviceId] = {
         state: stateValue,
@@ -153,11 +163,11 @@ export const queryDeviceStatesFromApi = async (deviceIds: string[]): Promise<Rec
 // Executes a command on a device via your bridge (EXECUTE intent)
 export const executeDeviceCommandOnApi = async (
   deviceId: string,
-  command: string, // e.g., "action.devices.commands.OnOff"
-  params: Record<string, any> // e.g., { "on": true }
+  command: string, 
+  params: Record<string, any> 
 ): Promise<{ success: boolean; newState?: 'on' | 'off' | string | number | boolean }> => {
   try {
-    const response = await fetch(SMART_HOME_API_URL, { // Uses the base URL
+    const response = await fetch(SMART_HOME_API_URL, { 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -184,38 +194,18 @@ export const executeDeviceCommandOnApi = async (
     const cmdResponse = data.payload?.commands?.[0];
 
     if (cmdResponse && cmdResponse.status === 'SUCCESS') {
-      // Extract the new state from the response if available
       let reportedNewState: 'on' | 'off' | string | number | boolean | undefined = undefined;
-      if (cmdResponse.states?.on !== undefined) { // For OnOff trait
+      if (cmdResponse.states?.on !== undefined) { 
         reportedNewState = cmdResponse.states.on ? 'on' : 'off';
-      } else if (cmdResponse.states?.status !== undefined) { // More generic state if present
-        reportedNewState = cmdResponse.states.status;
       }
-      // Potentially add more specific state extractions here based on device type/traits
-      // e.g., cmdResponse.states.brightness, cmdResponse.states.thermostatTemperatureSetpoint
-
       return { success: true, newState: reportedNewState };
     } else {
       console.error('EXECUTE command failed or invalid response:', data);
-      // Try to get error code if available
       const errorCode = cmdResponse?.errorCode || 'unknownError';
       throw new Error(`Command execution failed with status: ${cmdResponse?.status || 'UNKNOWN'}, error: ${errorCode}`);
     }
   } catch (error) {
     console.error('Error in executeDeviceCommandOnApi:', error);
-    // Ensure the error is re-thrown or handled to indicate failure
     throw error;
   }
 };
-
-// --- Mock functions (can be removed or commented out if API integration is complete) ---
-// const mockDevices: Device[] = [
-//   { id: 'light.living_room', name: 'Living Room Light', type: 'light', state: 'on', online: true, icon: Lightbulb, attributes: { googleDeviceType: 'action.devices.types.LIGHT' } },
-//   { id: 'switch.desk_fan', name: 'Desk Fan', type: 'switch', state: 'off', online: true, icon: Power, attributes: { googleDeviceType: 'action.devices.types.SWITCH' }  },
-// ];
-
-// export const fetchDevices = async (): Promise<Device[]> => {
-//   console.warn("Using mock fetchDevices. Remove for production.");
-//   return new Promise((resolve) => setTimeout(() => resolve(mockDevices), 500));
-// };
-// --- End of mock functions ---
