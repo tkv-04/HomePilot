@@ -7,7 +7,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { 
   fetchDevicesFromApi, 
   queryDeviceStatesFromApi, 
-  executeDeviceCommandsOnApi // Corrected import
+  executeDeviceCommandsOnApi
 } from '@/services/homeAssistantService';
 import { DeviceCard } from './DeviceCard';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -16,8 +16,7 @@ import { ServerCrash, WifiOff, Settings2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-
-const SELECTED_DEVICES_LS_KEY = 'homepilot_selected_device_ids';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext'; // Added import
 
 interface DeviceDisplayProps {
   onDevicesLoaded?: (devices: Device[]) => void;
@@ -25,10 +24,15 @@ interface DeviceDisplayProps {
 
 export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
   const [displayedDevices, setDisplayedDevices] = useState<Device[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingInitialData, setIsLoadingInitialData] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [hasSelectedDevices, setHasSelectedDevices] = useState(false);
+  const [hasAttemptedLoad, setHasAttemptedLoad] = useState(false);
   const { toast } = useToast();
+  const { 
+    preferences, 
+    isLoading: isLoadingPreferences, 
+    error: preferencesError 
+  } = useUserPreferences();
 
   const updateParentWithDevices = useCallback((devices: Device[]) => {
     if (onDevicesLoaded) {
@@ -38,28 +42,33 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
 
   useEffect(() => {
     const loadDevices = async () => {
-      setIsLoading(true);
-      setError(null);
-      setDisplayedDevices([]);
-
-      let selectedIds: string[] = [];
-      if (typeof window !== 'undefined') {
-        const storedSelection = localStorage.getItem(SELECTED_DEVICES_LS_KEY);
-        if (storedSelection) {
-          try {
-            selectedIds = JSON.parse(storedSelection);
-          } catch (e) {
-            console.error("Failed to parse selected devices from localStorage", e);
-            localStorage.removeItem(SELECTED_DEVICES_LS_KEY);
-          }
+      if (isLoadingPreferences || !preferences) {
+        // Wait for preferences to load or if there are no preferences (e.g. new user, or error)
+        if(!isLoadingPreferences && !preferences && !preferencesError){
+            // Preferences loaded, but no preferences object (e.g. new user with no saved prefs)
+            setDisplayedDevices([]);
+            updateParentWithDevices([]);
+            setIsLoadingInitialData(false);
+            setHasAttemptedLoad(true);
+        } else if (!isLoadingPreferences && preferencesError) {
+            setError(`Failed to load user preferences: ${preferencesError.message}`);
+            setIsLoadingInitialData(false);
+            setHasAttemptedLoad(true);
         }
+        // else, still loading preferences, so just wait.
+        return;
       }
       
-      setHasSelectedDevices(selectedIds.length > 0);
+      setIsLoadingInitialData(true);
+      setError(null);
+      setDisplayedDevices([]); // Clear previous devices
 
+      const selectedIds = preferences.selectedDeviceIds || [];
+      
       if (selectedIds.length === 0) {
-        setIsLoading(false);
+        setIsLoadingInitialData(false);
         updateParentWithDevices([]);
+        setHasAttemptedLoad(true);
         return;
       }
 
@@ -69,7 +78,6 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
 
         if (devicesToQuery.length > 0) {
           const deviceIdsToQuery = devicesToQuery.map(d => d.id);
-          console.log("DeviceDisplay: Querying states for IDs:", deviceIdsToQuery);
           const states = await queryDeviceStatesFromApi(deviceIdsToQuery);
           
           const updatedDevices = devicesToQuery.map(device => {
@@ -85,9 +93,6 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
         } else {
           setDisplayedDevices([]);
           updateParentWithDevices([]);
-          if (allFetchedDevices.length > 0) {
-             setHasSelectedDevices(true); 
-          }
         }
       } catch (err: any) {
         console.error("Failed to fetch devices or their states from API. Full error object:", err);
@@ -101,12 +106,13 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
         setDisplayedDevices([]);
         updateParentWithDevices([]);
       } finally {
-        setIsLoading(false);
+        setIsLoadingInitialData(false);
+        setHasAttemptedLoad(true);
       }
     };
 
     loadDevices();
-  }, [updateParentWithDevices]); // Added updateParentWithDevices to dependency array
+  }, [preferences, isLoadingPreferences, preferencesError, updateParentWithDevices]);
 
   const handleToggleDeviceState = async (deviceId: string, currentDeviceState: Device['state']) => {
     const device = displayedDevices.find(d => d.id === deviceId);
@@ -115,24 +121,20 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
     const currentOnState = currentDeviceState === 'on';
     const targetOnState = !currentOnState;
 
+    // Optimistic UI update
     let newDeviceList = displayedDevices.map(d =>
       d.id === deviceId ? { ...d, state: targetOnState ? 'on' : 'off' } : d
     );
     setDisplayedDevices(newDeviceList);
-    // Optimistic update to parent
     updateParentWithDevices(newDeviceList);
-
 
     try {
       const commandToExecute = {
         deviceId: deviceId,
-        command: 'action.devices.commands.OnOff', // Standard OnOff command
+        command: 'action.devices.commands.OnOff',
         params: { on: targetOnState }
       };
-      // Use the updated function that expects an array of commands
       const result = await executeDeviceCommandsOnApi([commandToExecute]);
-
-      // Assuming the first command in the result corresponds to our single command
       const commandResult = result.commands[0]; 
 
       if (commandResult && commandResult.status === 'SUCCESS') {
@@ -141,7 +143,6 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
           description: `${device.name} turned ${targetOnState ? 'ON' : 'OFF'}.`,
         });
         
-        // If EXECUTE returns new states, use them.
         const newApiState = commandResult.states?.on !== undefined ? (commandResult.states.on ? 'on' : 'off') : undefined;
         const newApiOnline = commandResult.states?.online !== undefined ? commandResult.states.online : device.online;
 
@@ -149,33 +150,27 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
            newDeviceList = displayedDevices.map(d =>
             d.id === deviceId ? { ...d, state: newApiState, online: newApiOnline } : d
           );
-          setDisplayedDevices(newDeviceList);
-          updateParentWithDevices(newDeviceList);
         } else {
-          // If EXECUTE doesn't return state, query it after a short delay
-          setTimeout(async () => {
-            try {
-              const updatedStates = await queryDeviceStatesFromApi([deviceId]);
-              if (updatedStates[deviceId]) {
-                const refreshedDeviceList = displayedDevices.map(d =>
-                  d.id === deviceId ? { ...d, state: updatedStates[deviceId].state, online: updatedStates[deviceId].online } : d
-                );
-                setDisplayedDevices(refreshedDeviceList);
-                updateParentWithDevices(refreshedDeviceList);
-              }
-            } catch (queryError) {
-              console.error(`Failed to re-query state for ${deviceId} after command:`, queryError);
-            }
-          }, 1000);
+           // If EXECUTE doesn't return state, query it after a short delay
+           const updatedStates = await queryDeviceStatesFromApi([deviceId]);
+           if (updatedStates[deviceId]) {
+             newDeviceList = displayedDevices.map(d =>
+               d.id === deviceId ? { ...d, state: updatedStates[deviceId].state, online: updatedStates[deviceId].online } : d
+             );
+           }
         }
+        setDisplayedDevices(newDeviceList); // Update with confirmed state
+        updateParentWithDevices(newDeviceList);
+
       } else {
         toast({
           title: "Command Failed",
           description: `Could not change ${device.name} state. Reverting UI. Error: ${commandResult?.errorCode || 'Unknown error'}`,
           variant: "destructive",
         });
+        // Revert optimistic update
         newDeviceList = displayedDevices.map(d =>
-          d.id === deviceId ? { ...d, state: currentOnState ? 'on' : 'off' } : d
+          d.id === deviceId ? { ...d, state: currentOnState ? 'on' : 'off' } : d // Revert to original state
         );
         setDisplayedDevices(newDeviceList);
         updateParentWithDevices(newDeviceList);
@@ -186,6 +181,7 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
         description: `Error controlling ${device.name}: ${err.message}. Reverting UI.`,
         variant: "destructive",
       });
+      // Revert optimistic update
        newDeviceList = displayedDevices.map(d =>
         d.id === deviceId ? { ...d, state: currentOnState ? 'on' : 'off' } : d
       );
@@ -193,6 +189,8 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
        updateParentWithDevices(newDeviceList);
     }
   };
+  
+  const isLoading = isLoadingInitialData || isLoadingPreferences;
 
   if (isLoading) {
     return (
@@ -221,7 +219,9 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
     );
   }
 
-  if (!hasSelectedDevices && !isLoading) {
+  const noDevicesSelected = !preferences?.selectedDeviceIds || preferences.selectedDeviceIds.length === 0;
+
+  if (hasAttemptedLoad && noDevicesSelected && !isLoading) {
     return (
       <Alert className="max-w-lg mx-auto">
         <Settings2 className="h-5 w-5" />
@@ -241,13 +241,13 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
     );
   }
   
-  if (displayedDevices.length === 0 && hasSelectedDevices && !isLoading) {
+  if (hasAttemptedLoad && displayedDevices.length === 0 && !noDevicesSelected && !isLoading) {
      return (
        <Alert className="max-w-lg mx-auto">
         <WifiOff className="h-5 w-5" />
         <AlertTitle>No Devices to Display</AlertTitle>
         <AlertDescription>
-          Selected devices might be offline or no longer available from your smart home bridge.
+          Your selected devices might be offline or no longer available from your smart home bridge.
           Try managing your devices or check your bridge connection.
         </AlertDescription>
          <div className="mt-4">
@@ -260,7 +260,6 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
       </Alert>
     );
   }
-
 
   return (
     <div>
@@ -277,4 +276,3 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
     </div>
   );
 }
-

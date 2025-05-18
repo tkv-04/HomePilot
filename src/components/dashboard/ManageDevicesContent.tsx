@@ -3,29 +3,35 @@
 "use client";
 
 import type { Device } from '@/types/home-assistant';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { fetchDevicesFromApi } from '@/services/homeAssistantService';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ListChecks, AlertCircle, CheckSquare, Square, Save, ArrowLeft } from 'lucide-react';
+import { ListChecks, AlertCircle, CheckSquare, Square, Save, ArrowLeft, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
-
-const SELECTED_DEVICES_LS_KEY = 'homepilot_selected_device_ids';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 
 export function ManageDevicesContent() {
   const [allDevices, setAllDevices] = useState<Device[]>([]);
-  const [selectedDeviceIds, setSelectedDeviceIds] = useState<Set<string>>(new Set());
-  const [isLoading, setIsLoading] = useState(true);
+  const [localSelectedDeviceIds, setLocalSelectedDeviceIds] = useState<Set<string>>(new Set());
+  const [isLoadingDevices, setIsLoadingDevices] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
+  const { 
+    preferences, 
+    updateSelectedDeviceIds, 
+    isLoading: isLoadingPreferences,
+    error: preferencesError 
+  } = useUserPreferences();
 
   useEffect(() => {
     const loadAllDevices = async () => {
-      setIsLoading(true);
+      setIsLoadingDevices(true);
       setError(null);
       try {
         const fetchedDevices = await fetchDevicesFromApi();
@@ -35,28 +41,23 @@ export function ManageDevicesContent() {
         setError(err.message || "Could not load devices. Please try again.");
         setAllDevices([]);
       } finally {
-        setIsLoading(false);
+        setIsLoadingDevices(false);
       }
     };
-
     loadAllDevices();
-
-    // Load selected devices from localStorage
-    if (typeof window !== 'undefined') {
-      const storedSelection = localStorage.getItem(SELECTED_DEVICES_LS_KEY);
-      if (storedSelection) {
-        try {
-          setSelectedDeviceIds(new Set(JSON.parse(storedSelection)));
-        } catch (e) {
-          console.error("Failed to parse selected devices from localStorage", e);
-          localStorage.removeItem(SELECTED_DEVICES_LS_KEY); // Clear invalid data
-        }
-      }
-    }
   }, []);
 
+  useEffect(() => {
+    if (preferences?.selectedDeviceIds) {
+      setLocalSelectedDeviceIds(new Set(preferences.selectedDeviceIds));
+    } else if (!isLoadingPreferences && !preferencesError) {
+        // If preferences are loaded and selectedDeviceIds is undefined/null (e.g. new user), initialize as empty set
+        setLocalSelectedDeviceIds(new Set());
+    }
+  }, [preferences, isLoadingPreferences, preferencesError]);
+
   const handleToggleSelection = (deviceId: string) => {
-    setSelectedDeviceIds(prevSelected => {
+    setLocalSelectedDeviceIds(prevSelected => {
       const newSelected = new Set(prevSelected);
       if (newSelected.has(deviceId)) {
         newSelected.delete(deviceId);
@@ -67,22 +68,34 @@ export function ManageDevicesContent() {
     });
   };
 
-  const handleSaveSelection = () => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(SELECTED_DEVICES_LS_KEY, JSON.stringify(Array.from(selectedDeviceIds)));
+  const handleSaveSelection = async () => {
+    setIsSaving(true);
+    try {
+      await updateSelectedDeviceIds(Array.from(localSelectedDeviceIds));
       toast({
         title: "Selection Saved",
-        description: `${selectedDeviceIds.size} devices will now be shown on your dashboard.`,
+        description: `${localSelectedDeviceIds.size} devices will now be shown on your dashboard.`,
       });
+    } catch (err) {
+      toast({
+        title: "Save Failed",
+        description: "Could not save your device selection. Please try again.",
+        variant: "destructive",
+      });
+      console.error("Failed to save selection to Firestore:", err);
+    } finally {
+      setIsSaving(false);
     }
   };
+  
+  const isLoading = isLoadingDevices || isLoadingPreferences;
 
   if (isLoading) {
     return (
       <Card className="w-full max-w-3xl mx-auto shadow-xl">
         <CardHeader>
           <CardTitle className="text-2xl flex items-center"><ListChecks className="mr-2 h-6 w-6 text-primary" /> Manage Dashboard Devices</CardTitle>
-          <CardDescription>Loading available devices...</CardDescription>
+          <CardDescription>Loading available devices and your preferences...</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {Array.from({ length: 5 }).map((_, index) => (
@@ -96,12 +109,12 @@ export function ManageDevicesContent() {
     );
   }
 
-  if (error) {
+  if (error || preferencesError) {
     return (
       <Alert variant="destructive" className="max-w-md mx-auto">
         <AlertCircle className="h-5 w-5" />
-        <AlertTitle>Error Loading Devices</AlertTitle>
-        <AlertDescription>{error}</AlertDescription>
+        <AlertTitle>Error</AlertTitle>
+        <AlertDescription>{error || preferencesError?.message || "An unexpected error occurred."}</AlertDescription>
       </Alert>
     );
   }
@@ -113,7 +126,7 @@ export function ManageDevicesContent() {
         <CardDescription>Select the devices you want to see and control on your main dashboard.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 max-h-[60vh] overflow-y-auto p-4">
-        {allDevices.length === 0 && !isLoading ? (
+        {allDevices.length === 0 && !isLoadingDevices ? (
            <Alert>
             <ListChecks className="h-5 w-5" />
             <AlertTitle>No Devices Found</AlertTitle>
@@ -127,9 +140,10 @@ export function ManageDevicesContent() {
             <div key={device.id} className="flex items-center space-x-3 p-3 border rounded-md hover:bg-muted/20 transition-colors duration-150">
               <Checkbox
                 id={`device-${device.id}`}
-                checked={selectedDeviceIds.has(device.id)}
+                checked={localSelectedDeviceIds.has(device.id)}
                 onCheckedChange={() => handleToggleSelection(device.id)}
                 aria-label={`Select ${device.name}`}
+                disabled={isSaving}
               />
               <label
                 htmlFor={`device-${device.id}`}
@@ -137,7 +151,7 @@ export function ManageDevicesContent() {
               >
                 {device.name} <span className="text-xs text-muted-foreground">({device.type}, ID: {device.id})</span>
               </label>
-              {selectedDeviceIds.has(device.id) ? <CheckSquare className="h-5 w-5 text-accent" /> : <Square className="h-5 w-5 text-muted-foreground" />}
+              {localSelectedDeviceIds.has(device.id) ? <CheckSquare className="h-5 w-5 text-accent" /> : <Square className="h-5 w-5 text-muted-foreground" />}
             </div>
           ))
         )}
@@ -149,8 +163,8 @@ export function ManageDevicesContent() {
             Back to Dashboard
           </Link>
         </Button>
-        <Button onClick={handleSaveSelection} disabled={allDevices.length === 0}>
-          <Save className="mr-2 h-4 w-4" />
+        <Button onClick={handleSaveSelection} disabled={allDevices.length === 0 || isSaving || isLoadingPreferences}>
+          {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
           Save to Dashboard
         </Button>
       </CardFooter>
