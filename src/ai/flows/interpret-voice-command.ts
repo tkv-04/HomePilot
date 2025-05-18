@@ -2,6 +2,7 @@
 'use server';
 /**
  * @fileOverview This file defines a Genkit flow to interpret voice commands for home automation.
+ * It can understand single queries or multiple actions on devices from a single command.
  *
  * - interpretVoiceCommand - A function that takes a voice command as input and returns an
  *   actionable command or query for Home Assistant.
@@ -19,12 +20,21 @@ export type InterpretVoiceCommandInput = z.infer<
   typeof InterpretVoiceCommandInputSchema
 >;
 
-const InterpretVoiceCommandOutputSchema = z.object({
-  intentType: z.enum(['action', 'query']).describe('The type of intent: "action" to perform on a device, or "query" to get information.'),
-  action: z.string().describe('If intentType is "action", the action to perform (e.g., "turn on", "turn off"). If intentType is "query", the type of information requested (e.g., "get temperature", "get status").'),
-  device: z.string().describe('The target device for the action or query.'),
-  rawValue: z.string().optional().describe('The raw value from the voice command, if applicable (e.g., for setting brightness - not currently used for on/off or queries).'),
+const SingleDeviceActionSchema = z.object({
+  device: z.string().describe('The target device for the action. This should be the name of the device spoken by the user, e.g., "kitchen light", "living room fan".'),
+  action: z.string().describe('The action to perform on the device (e.g., "turn on", "turn off"). Make this concise.'),
+  // rawValue: z.string().optional().describe('The raw value from the voice command, if applicable (e.g., for setting brightness - not currently used).'),
 });
+
+const InterpretVoiceCommandOutputSchema = z.object({
+  intentType: z.enum(['action', 'query']).describe('The type of intent: "action" to perform on device(s), or "query" to get information.'),
+  // For actions
+  actions: z.array(SingleDeviceActionSchema).optional().describe('A list of actions to perform on devices. Used when intentType is "action". If multiple devices/actions are mentioned, list them all here.'),
+  // For queries (singular device/topic for query still makes sense for voice response)
+  queryTarget: z.string().optional().describe('The target device or topic for the query (e.g., "kitchen light", "living room temperature sensor"). Used when intentType is "query".'),
+  queryType: z.string().optional().describe('The type of information requested (e.g.,"get temperature", "get status", "is on"). Used when intentType is "query". Make this concise.'),
+});
+
 export type InterpretVoiceCommandOutput = z.infer<
   typeof InterpretVoiceCommandOutputSchema
 >;
@@ -40,23 +50,30 @@ const prompt = ai.definePrompt({
   input: {schema: InterpretVoiceCommandInputSchema},
   output: {schema: InterpretVoiceCommandOutputSchema},
   prompt: `You are a helpful AI assistant that interprets voice commands for home automation.
-Your task is to extract the intent from the given voice command and convert that into actionable steps or information queries.
+Your task is to extract the intent from the given voice command.
 
 Given a voice command:
-- Determine if the user wants to perform an ACTION (e.g., "turn on the light", "turn off the fan") or make a QUERY (e.g., "what is the temperature?", "is the living room light on?").
-- Set the 'intentType' field to 'action' or 'query'.
-- For 'action' intents, extract the action to perform (e.g., "turn on") and the target device. Make the action concise, like "turn on" or "turn off".
-- For 'query' intents, determine what information is being asked for (e.g., "get temperature", "get humidity", "get status") and the target device. Make the action concise, like "get temperature" or "get status".
-- If applicable, extract the raw value (though less common for simple on/off or queries).
-Return the intentType, action, device, and rawValue (if applicable) in JSON format.
+- First, determine if the user wants to perform an ACTION (e.g., "turn on the light", "turn off the fan and turn on the AC") or make a QUERY (e.g., "what is the temperature?", "is the living room light on?"). Set the 'intentType' field to 'action' or 'query'.
 
-Examples:
-- Voice Command: "Jarvis, turn on the kitchen light" -> intentType: "action", action: "turn on", device: "kitchen light"
-- Voice Command: "Jarvis, what is the temperature in the living room?" -> intentType: "query", action: "get temperature", device: "living room temperature sensor" (or a generic name if the user isn't specific, but try to match known device names)
-- Voice Command: "Jarvis, is the fan on?" -> intentType: "query", action: "get status", device: "fan"
-- Voice Command: "Jarvis, what's the humidity?" -> intentType: "query", action: "get humidity", device: "humidity sensor" (or a more specific name if available)
+- If 'intentType' is "action":
+  - Extract ALL actions and their target devices mentioned. Populate the 'actions' array.
+  - For each item in 'actions', specify the 'device' (e.g., "kitchen light", "fan") and the 'action' (e.g., "turn on", "turn off"). Make actions concise.
+  - Example: "Jarvis, turn on the kitchen light and turn off the living room fan"
+    -> intentType: "action", actions: [{ device: "kitchen light", action: "turn on" }, { device: "living room fan", action: "turn off" }]
+  - Example: "Jarvis, switch off the main lamp"
+    -> intentType: "action", actions: [{ device: "main lamp", action: "turn off" }]
+
+- If 'intentType' is "query":
+  - Determine what information is being asked for and the target device/topic.
+  - Populate 'queryTarget' (e.g., "living room temperature sensor", "fan") and 'queryType' (e.g., "get temperature", "get status", "is on"). Make queryType concise.
+  - Queries usually target a single piece of information.
+  - Example: "Jarvis, what is the temperature in the living room?"
+    -> intentType: "query", queryTarget: "living room temperature sensor", queryType: "get temperature"
+  - Example: "Jarvis, is the fan on?"
+    -> intentType: "query", queryTarget: "fan", queryType: "get status" (or "is on")
 
 If the device name in the voice command is generic (e.g., "the sensor", "the light"), try to infer a more specific device name if the context allows, or use the generic name.
+The 'device' field in actions or 'queryTarget' in queries should be the name as commonly referred to by the user.
 
 Voice Command: {{{voiceCommand}}}`,
 });

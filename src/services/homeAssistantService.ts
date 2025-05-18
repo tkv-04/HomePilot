@@ -3,9 +3,9 @@
 import type { Device } from '@/types/home-assistant';
 import { Lightbulb, Power, Wind, Zap, HelpCircle, Thermometer, Droplets, Tv } from 'lucide-react';
 
-const SMART_HOME_API_URL = 'https://smarthome.tkv.in.net/smarthome'; 
+const SMART_HOME_API_URL = 'https://smarthome.tkv.in.net/smarthome';
 
-// Helper to generate a unique request ID (simple version)
+// Helper to generate a unique request ID
 const generateRequestId = (): string => {
   return `homepilot-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 };
@@ -13,9 +13,11 @@ const generateRequestId = (): string => {
 // Maps Google Device Types to internal app types and Lucide icons
 const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
   let appType: Device['type'] = 'unknown';
-  let icon: React.ElementType = HelpCircle; 
+  let icon: React.ElementType = HelpCircle;
   let deviceSpecificAttributes: Device['attributes'] = {
     googleDeviceType: googleDevice.type,
+    // Ensure sensorStatesSupported is an array, even if undefined in source
+    sensorStatesSupported: googleDevice.attributes?.sensorStatesSupported || [],
   };
 
   switch (googleDevice.type) {
@@ -29,7 +31,7 @@ const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
       break;
     case 'action.devices.types.OUTLET':
       appType = 'outlet';
-      icon = Power; // Often represented same as switch
+      icon = Power;
       break;
     case 'action.devices.types.FAN':
       appType = 'fan';
@@ -39,17 +41,16 @@ const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
       appType = 'sensor';
       icon = HelpCircle; // Default for generic sensors
       let unit = '';
-      // Check for sensorStatesSupported from SYNC response as primary source for sensor details
-      if (googleDevice.attributes && googleDevice.attributes.sensorStatesSupported && googleDevice.attributes.sensorStatesSupported.length > 0) {
-        const sensorStateInfo = googleDevice.attributes.sensorStatesSupported[0]; // Using the first supported state
+      // Check sensorStatesSupported from SYNC response
+      if (deviceSpecificAttributes.sensorStatesSupported && deviceSpecificAttributes.sensorStatesSupported.length > 0) {
+        const sensorStateInfo = deviceSpecificAttributes.sensorStatesSupported[0]; // Using the first supported state
         if (sensorStateInfo.name === 'temperature') {
           icon = Thermometer;
-          unit = sensorStateInfo.unit || '°'; 
+          unit = sensorStateInfo.unit || '°';
         } else if (sensorStateInfo.name === 'humidity') {
           icon = Droplets;
           unit = sensorStateInfo.unit || '%';
         }
-        // Add more specific sensor type checks here if needed
       }
       deviceSpecificAttributes.unit_of_measurement = unit;
       break;
@@ -64,7 +65,6 @@ const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
   };
 };
 
-// Fetches the list of devices from your bridge (SYNC intent)
 export const fetchDevicesFromApi = async (): Promise<Device[]> => {
   try {
     const response = await fetch(SMART_HOME_API_URL, {
@@ -94,10 +94,10 @@ export const fetchDevicesFromApi = async (): Promise<Device[]> => {
         id: d.id, 
         name: d.name?.name || d.id,
         type: mappedTypeAndAttributes.type || 'unknown',
-        state: 'unknown', // Initial state, will be updated by QUERY
-        online: false, // Initial state, will be updated by QUERY
+        state: 'unknown', 
+        online: false, 
         icon: mappedTypeAndAttributes.icon,
-        attributes: { ...(d.attributes || {}), ...mappedTypeAndAttributes.attributes }, // Merge attributes
+        attributes: { ...(d.attributes || {}), ...mappedTypeAndAttributes.attributes },
       };
     });
   } catch (error) {
@@ -106,7 +106,6 @@ export const fetchDevicesFromApi = async (): Promise<Device[]> => {
   }
 };
 
-// Queries the current states of devices from your bridge (QUERY intent)
 export const queryDeviceStatesFromApi = async (deviceIds: string[]): Promise<Record<string, { state: 'on' | 'off' | 'unknown' | string | number | boolean; online: boolean }>> => {
   if (deviceIds.length === 0) return {};
   try {
@@ -138,23 +137,20 @@ export const queryDeviceStatesFromApi = async (deviceIds: string[]): Promise<Rec
     const deviceStates: Record<string, { state: 'on' | 'off' | 'unknown' | string | number | boolean; online: boolean }> = {};
     for (const deviceId in data.payload.devices) {
       const deviceData = data.payload.devices[deviceId];
-      // Log the raw data received for this deviceId from the QUERY
       console.log(`Query data for ${deviceId}:`, JSON.stringify(deviceData));
 
       let stateValue: 'on' | 'off' | 'unknown' | string | number | boolean = 'unknown';
       
-      if (deviceData.on !== undefined) { // Check for 'on' property (for lights, switches, etc.)
+      if (deviceData.on !== undefined) {
         stateValue = deviceData.on ? 'on' : 'off';
       } else {
-        // If 'on' is not present, it might be a sensor.
-        // Iterate over keys to find the state value, excluding 'online'.
-        const potentialStateKeys = Object.keys(deviceData).filter(k => k !== 'online');
+        // Try to find the primary sensor value (e.g., temperature value, humidity value)
+        // This assumes the bridge's QUERY response includes the main sensor reading directly
+        // e.g., { "temperature": 22, "online": true }
+        const potentialStateKeys = Object.keys(deviceData).filter(k => k !== 'online' && k !== 'on');
         if (potentialStateKeys.length > 0) {
-          // Use the value of the first such key as the state.
-          // This assumes the bridge sends sensor values under a specific key (e.g., "temperature", "humidity", "value").
           stateValue = deviceData[potentialStateKeys[0]];
         }
-        // If no other key found, stateValue remains 'unknown'.
       }
       deviceStates[deviceId] = {
         state: stateValue,
@@ -168,13 +164,25 @@ export const queryDeviceStatesFromApi = async (deviceIds: string[]): Promise<Rec
   }
 };
 
-// Executes a command on a device via your bridge (EXECUTE intent)
-export const executeDeviceCommandOnApi = async (
-  deviceId: string,
-  command: string, 
-  params: Record<string, any> 
-): Promise<{ success: boolean; newState?: 'on' | 'off' | string | number | boolean }> => {
+export interface DeviceCommand {
+  deviceId: string;
+  command: string; // e.g., 'action.devices.commands.OnOff'
+  params: Record<string, any>; // e.g., { on: true }
+}
+
+// Executes one or more commands on devices via your bridge (EXECUTE intent)
+export const executeDeviceCommandsOnApi = async (
+  commandsToExecute: DeviceCommand[]
+): Promise<{ commands: Array<{ ids: string[]; status: string; states?: any; errorCode?: string }> }> => {
+  if (commandsToExecute.length === 0) {
+    return { commands: [] };
+  }
   try {
+    const executionPayload = commandsToExecute.map(cmd => ({
+      devices: [{ id: cmd.deviceId }],
+      execution: [{ command: cmd.command, params: cmd.params }],
+    }));
+
     const response = await fetch(SMART_HOME_API_URL, { 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -183,10 +191,7 @@ export const executeDeviceCommandOnApi = async (
         inputs: [{
           intent: 'action.devices.EXECUTE',
           payload: {
-            commands: [{
-              devices: [{ id: deviceId }],
-              execution: [{ command, params }],
-            }],
+            commands: executionPayload,
           },
         }],
       }),
@@ -195,28 +200,32 @@ export const executeDeviceCommandOnApi = async (
     if (!response.ok) {
       const errorData = await response.text();
       console.error('EXECUTE API Error Response:', errorData);
-      throw new Error(`Failed to execute command: ${response.status} ${response.statusText}`);
+      throw new Error(`Failed to execute command(s): ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json();
-    const cmdResponse = data.payload?.commands?.[0];
-
-    if (cmdResponse && cmdResponse.status === 'SUCCESS') {
-      let reportedNewState: 'on' | 'off' | string | number | boolean | undefined = undefined;
-      // If the EXECUTE response includes the new state (e.g., for OnOff)
-      if (cmdResponse.states?.on !== undefined) { 
-        reportedNewState = cmdResponse.states.on ? 'on' : 'off';
-      }
-      // Potentially handle other state updates from EXECUTE if your bridge returns them
-      return { success: true, newState: reportedNewState };
+    // The bridge already returns a payload.commands array with statuses for each.
+    if (data.payload && Array.isArray(data.payload.commands)) {
+      return { commands: data.payload.commands };
     } else {
-      console.error('EXECUTE command failed or invalid response:', data);
-      const errorCode = cmdResponse?.errorCode || 'unknownError';
-      throw new Error(`Command execution failed with status: ${cmdResponse?.status || 'UNKNOWN'}, error: ${errorCode}`);
+      console.error('EXECUTE command failed or invalid response format:', data);
+      // Construct a generic error response for all commands if format is unexpected
+      const errorResults = commandsToExecute.map(cmd => ({
+        ids: [cmd.deviceId],
+        status: 'ERROR',
+        errorCode: 'unknownDeviceError',
+      }));
+      return { commands: errorResults };
     }
-  } catch (error) {
-    console.error('Error in executeDeviceCommandOnApi:', error);
-    throw error;
+  } catch (error)
+ {
+    console.error('Error in executeDeviceCommandsOnApi:', error);
+    // Construct a generic error response for all commands on network/request error
+    const errorResults = commandsToExecute.map(cmd => ({
+      ids: [cmd.deviceId],
+      status: 'ERROR',
+      errorCode: error instanceof Error ? error.message : 'clientSideError',
+    }));
+    return { commands: errorResults };
   }
 };
-    

@@ -1,3 +1,4 @@
+
 // src/components/dashboard/DeviceDisplay.tsx
 "use client";
 
@@ -6,7 +7,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { 
   fetchDevicesFromApi, 
   queryDeviceStatesFromApi, 
-  executeDeviceCommandOnApi 
+  executeDeviceCommandsOnApi // Corrected import
 } from '@/services/homeAssistantService';
 import { DeviceCard } from './DeviceCard';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -68,6 +69,7 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
 
         if (devicesToQuery.length > 0) {
           const deviceIdsToQuery = devicesToQuery.map(d => d.id);
+          console.log("DeviceDisplay: Querying states for IDs:", deviceIdsToQuery);
           const states = await queryDeviceStatesFromApi(deviceIdsToQuery);
           
           const updatedDevices = devicesToQuery.map(device => {
@@ -122,24 +124,35 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
 
 
     try {
-      const result = await executeDeviceCommandOnApi(
-        deviceId,
-        'action.devices.commands.OnOff',
-        { on: targetOnState }
-      );
+      const commandToExecute = {
+        deviceId: deviceId,
+        command: 'action.devices.commands.OnOff', // Standard OnOff command
+        params: { on: targetOnState }
+      };
+      // Use the updated function that expects an array of commands
+      const result = await executeDeviceCommandsOnApi([commandToExecute]);
 
-      if (result.success) {
+      // Assuming the first command in the result corresponds to our single command
+      const commandResult = result.commands[0]; 
+
+      if (commandResult && commandResult.status === 'SUCCESS') {
         toast({
           title: "Command Sent",
           description: `${device.name} turned ${targetOnState ? 'ON' : 'OFF'}.`,
         });
-        if (result.newState !== undefined) {
+        
+        // If EXECUTE returns new states, use them.
+        const newApiState = commandResult.states?.on !== undefined ? (commandResult.states.on ? 'on' : 'off') : undefined;
+        const newApiOnline = commandResult.states?.online !== undefined ? commandResult.states.online : device.online;
+
+        if (newApiState !== undefined) {
            newDeviceList = displayedDevices.map(d =>
-            d.id === deviceId ? { ...d, state: result.newState!, online: true } : d
+            d.id === deviceId ? { ...d, state: newApiState, online: newApiOnline } : d
           );
           setDisplayedDevices(newDeviceList);
           updateParentWithDevices(newDeviceList);
         } else {
+          // If EXECUTE doesn't return state, query it after a short delay
           setTimeout(async () => {
             try {
               const updatedStates = await queryDeviceStatesFromApi([deviceId]);
@@ -158,7 +171,7 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
       } else {
         toast({
           title: "Command Failed",
-          description: `Could not change ${device.name} state. Reverting UI.`,
+          description: `Could not change ${device.name} state. Reverting UI. Error: ${commandResult?.errorCode || 'Unknown error'}`,
           variant: "destructive",
         });
         newDeviceList = displayedDevices.map(d =>
@@ -264,3 +277,4 @@ export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
     </div>
   );
 }
+
