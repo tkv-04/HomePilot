@@ -1,6 +1,6 @@
 // src/services/homeAssistantService.ts
 import type { Device } from '@/types/home-assistant';
-import { Lightbulb, Power, Wind, Zap, Thermometer, Droplets, Tv, Question } from 'lucide-react';
+import { Lightbulb, Power, Wind, Zap, HelpCircle } from 'lucide-react'; // Replaced Question with HelpCircle
 
 const SMART_HOME_API_URL = 'https://smarthome.tkv.in.net/smarthome'; // Ensure this is HTTPS if your server supports it. If not, use HTTP.
 
@@ -12,7 +12,7 @@ const generateRequestId = (): string => {
 // Maps Google Device Types to internal app types and Lucide icons
 const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
   let appType: Device['type'] = 'unknown';
-  let icon: React.ElementType = Question;
+  let icon: React.ElementType = HelpCircle; // Fallback to HelpCircle
 
   switch (googleDevice.type) {
     case 'action.devices.types.LIGHT':
@@ -24,7 +24,7 @@ const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
       icon = Power;
       break;
     case 'action.devices.types.OUTLET':
-      appType = 'outlet'; // Or treat as 'switch'
+      appType = 'outlet';
       icon = Power;
       break;
     case 'action.devices.types.FAN':
@@ -34,7 +34,7 @@ const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
     // Add more mappings as needed for other device types your bridge supports
     default:
       appType = 'unknown';
-      icon = Zap; // Default icon
+      icon = Zap; // Default icon for truly unknown types if not covered by general 'unknown' above. HelpCircle is a good general fallback.
   }
   return {
     type: appType,
@@ -43,7 +43,6 @@ const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
       googleDeviceType: googleDevice.type,
       // store other relevant attributes from googleDevice.attributes if any
     },
-    // traits: googleDevice.traits,
   };
 };
 
@@ -122,8 +121,8 @@ export const queryDeviceStatesFromApi = async (deviceIds: string[]): Promise<Rec
     for (const deviceId in data.payload.devices) {
       const deviceData = data.payload.devices[deviceId];
       deviceStates[deviceId] = {
-        state: deviceData.on ? 'on' : 'off',
-        online: deviceData.online || false,
+        state: deviceData.on ? 'on' : 'off', // Assuming 'on' property directly indicates state
+        online: deviceData.online || false, // Assuming 'online' property indicates status
       };
     }
     return deviceStates;
@@ -165,15 +164,21 @@ export const executeDeviceCommandOnApi = async (
 
     const data = await response.json();
     const cmdResponse = data.payload?.commands?.[0];
+
     if (cmdResponse && cmdResponse.status === 'SUCCESS') {
-      return { success: true, newState: cmdResponse.states?.on ? 'on' : 'off' };
+      // Extract the new state from the response if available
+      const newOnState = cmdResponse.states?.on; // This might be true/false
+      return { success: true, newState: newOnState !== undefined ? (newOnState ? 'on' : 'off') : undefined };
     } else {
       console.error('EXECUTE command failed or invalid response:', data);
-      return { success: false };
+      // Try to get error code if available
+      const errorCode = cmdResponse?.errorCode || 'unknownError';
+      throw new Error(`Command execution failed with status: ${cmdResponse?.status || 'UNKNOWN'}, error: ${errorCode}`);
     }
   } catch (error) {
     console.error('Error in executeDeviceCommandOnApi:', error);
-    return { success: false };
+    // Ensure the error is re-thrown or handled to indicate failure
+    throw error;
   }
 };
 

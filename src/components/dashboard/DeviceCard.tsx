@@ -4,7 +4,7 @@
 import type { Device } from '@/types/home-assistant';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Lightbulb, Power, Wind, Zap, Thermometer, Droplets, Tv, Question, WifiOff } from 'lucide-react'; // Added Question, WifiOff
+import { Lightbulb, Power, Wind, Zap, Thermometer, Droplets, Tv, HelpCircle, WifiOff } from 'lucide-react'; // Replaced Question with HelpCircle
 import { Switch as UISwitch } from '@/components/ui/switch';
 // Progress component is removed as brightness attribute is not reliably available for now
 // import { Progress } from '@/components/ui/progress';
@@ -16,7 +16,7 @@ interface DeviceCardProps {
 
 // getDeviceIcon now uses the icon pre-assigned by the service, or falls back
 const getDeviceIconElement = (device: Device): React.ReactElement => {
-  const IconComponent = device.icon || Zap; // Fallback to Zap if no icon provided
+  const IconComponent = device.icon || HelpCircle; // Fallback to HelpCircle if no icon provided
   return <IconComponent className="h-6 w-6 text-muted-foreground" />;
 };
 
@@ -57,24 +57,10 @@ export function DeviceCard({ device, onToggleState }: DeviceCardProps) {
               disabled={!onToggleState || !device.online}
             />
             <span className={`capitalize text-sm ${isChecked && device.online ? 'text-accent' : 'text-muted-foreground'}`}>
-              {device.online ? device.state : 'Offline'}
+              {device.online ? String(device.state) : 'Offline'}
             </span>
-            {/* Brightness progress bar removed for now
-            {device.type === 'light' && device.attributes?.brightness !== undefined && device.state === 'on' && (
-                <div className="w-full ml-auto">
-                    <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                        <span>Brightness</span>
-                        <span>{`${Math.round((device.attributes.brightness / 255) * 100)}%`}</span>
-                    </div>
-                    <Progress value={(device.attributes.brightness / 255) * 100} className="h-2" />
-                </div>
-            )}
-            */}
           </div>
         );
-      // Sensor, media_player, climate types are simplified or shown as 'unknown' for now
-      // as the provided bridge primarily handles OnOff.
-      // These can be expanded if the bridge provides more detailed SYNC/QUERY data.
       case 'sensor':
          return (
           <p className="text-lg text-accent">
@@ -92,7 +78,7 @@ export function DeviceCard({ device, onToggleState }: DeviceCardProps) {
   return (
     <Card className={`shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col h-full ${!device.online ? 'opacity-60' : ''}`}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-lg font-medium">{device.name}</CardTitle>
+        <CardTitle className="text-lg font-medium truncate pr-2" title={device.name}>{device.name}</CardTitle>
         {IconElement}
       </CardHeader>
       <CardContent className="flex-grow flex flex-col justify-between space-y-4">
@@ -104,7 +90,7 @@ export function DeviceCard({ device, onToggleState }: DeviceCardProps) {
             {device.type.replace('_', ' ')}
           </Badge>
           {device.attributes?.googleDeviceType && (
-            <Badge variant="secondary" className="text-xs ml-2 truncate max-w-[150px]">
+            <Badge variant="secondary" className="text-xs ml-2 truncate max-w-[150px]" title={device.attributes.googleDeviceType.split('.').pop()?.toLowerCase()}>
               {device.attributes.googleDeviceType.split('.').pop()?.toLowerCase()}
             </Badge>
           )}
