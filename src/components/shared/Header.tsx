@@ -5,7 +5,7 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
-import { LogOut, Home, Settings2 } from 'lucide-react'; // Added Settings2
+import { LogOut, Home, Settings2, SettingsIcon } from 'lucide-react'; // Added SettingsIcon
 
 export function Header() {
   const { user, logout } = useAuth();
@@ -21,9 +21,14 @@ export function Header() {
           {user && (
             <>
               <span className="text-sm text-muted-foreground hidden md:inline">Welcome, {user.email}</span>
-              <Button variant="ghost" size="icon" asChild title="Manage Devices">
+              <Button variant="ghost" size="icon" asChild title="Manage Dashboard Devices">
                 <Link href="/manage-devices">
                   <Settings2 className="h-5 w-5 text-foreground hover:text-accent" />
+                </Link>
+              </Button>
+              <Button variant="ghost" size="icon" asChild title="Settings">
+                <Link href="/settings">
+                  <SettingsIcon className="h-5 w-5 text-foreground hover:text-accent" />
                 </Link>
               </Button>
               <Button variant="ghost" size="icon" onClick={logout} aria-label="Logout" title="Logout">
@@ -36,3 +41,4 @@ export function Header() {
     </header>
   );
 }
+
