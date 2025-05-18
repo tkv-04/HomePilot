@@ -1,8 +1,7 @@
-
 // src/components/auth/LoginForm.tsx
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react'; // Added useEffect
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -14,6 +13,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Eye, EyeOff, LogIn } from 'lucide-react';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
+import { useRouter } from 'next/navigation'; // For redirection after login success
 
 const loginSchema = z.object({
   email: z.string().email({ message: "Invalid email address." }),
@@ -23,51 +23,43 @@ const loginSchema = z.object({
 type LoginFormValues = z.infer<typeof loginSchema>;
 
 export function LoginForm() {
-  const { login } = useAuth();
+  const { login, user, isLoading: authIsLoading } = useAuth(); // Get user and authIsLoading from context
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false); // Renamed from isLoading to avoid conflict
   const { toast } = useToast();
+  const router = useRouter();
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
     defaultValues: {
       email: "test@test.com",
-      password: "123456",
+      password: "password", // Changed default password for testing Firebase Auth
     },
   });
 
-  const onSubmit = async (data: LoginFormValues) => {
-    setIsLoading(true);
-    try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Set the authentication cookie
-      document.cookie = "homepilot_user_token=mock_token; path=/; max-age=3600; SameSite=Lax"; // Expires in 1 hour
-      
-      login(data.email); // Update auth context state and localStorage
-      
-      // Force a full page navigation to '/' after a tiny delay
-      // This ensures the browser sends the newly set cookie with the request,
-      // allowing the middleware to reliably pick it up and redirect to /dashboard.
-      setTimeout(() => {
-        if (typeof window !== 'undefined') {
-          window.location.assign('/');
-        }
-      }, 50); // 50ms delay
-
-    } catch (error) {
-      console.error("Login attempt failed:", error);
-      toast({
-        title: "Login Failed",
-        description: "An unexpected error occurred. Please try again.",
-        variant: "destructive",
-      });
-      setIsLoading(false); 
+  // Redirect if user is already logged in
+  useEffect(() => {
+    if (user && !authIsLoading) {
+      router.push('/dashboard');
     }
-    // Do not set isLoading to false here if navigation is initiated,
-    // as the component will unmount. It's set in catch for errors.
+  }, [user, authIsLoading, router]);
+
+  const onSubmit = async (data: LoginFormValues) => {
+    setIsSubmitting(true);
+    try {
+      await login(data.email, data.password);
+      // Successful login: onAuthStateChanged in AuthContext will update user state.
+      // The useEffect above will then handle redirection to /dashboard.
+      // Toast for success is handled in AuthContext now.
+    } catch (error) {
+      // Error toast is handled in AuthContext's login method.
+      console.error("Login attempt failed in form:", error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
+  
+  const currentIsLoading = isSubmitting || authIsLoading;
 
   return (
     <Card className="w-full max-w-md shadow-2xl">
@@ -88,7 +80,7 @@ export function LoginForm() {
               placeholder="name@example.com"
               {...form.register("email")}
               className="bg-input/50"
-              disabled={isLoading}
+              disabled={currentIsLoading}
             />
             {form.formState.errors.email && (
               <p className="text-sm text-destructive">{form.formState.errors.email.message}</p>
@@ -103,7 +95,7 @@ export function LoginForm() {
                 placeholder="••••••••"
                 {...form.register("password")}
                 className="bg-input/50"
-                disabled={isLoading}
+                disabled={currentIsLoading}
               />
               <Button
                 type="button"
@@ -111,7 +103,7 @@ export function LoginForm() {
                 size="icon"
                 className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 onClick={() => setShowPassword(!showPassword)}
-                disabled={isLoading}
+                disabled={currentIsLoading}
                 aria-label={showPassword ? "Hide password" : "Show password"}
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
@@ -121,8 +113,8 @@ export function LoginForm() {
               <p className="text-sm text-destructive">{form.formState.errors.password.message}</p>
             )}
           </div>
-          <Button type="submit" className="w-full bg-primary hover:bg-primary/90 text-primary-foreground" disabled={isLoading}>
-            {isLoading ? (
+          <Button type="submit" className="w-full bg-primary hover:bg-primary/90 text-primary-foreground" disabled={currentIsLoading}>
+            {currentIsLoading ? (
               <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>

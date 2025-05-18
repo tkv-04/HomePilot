@@ -1,4 +1,3 @@
-
 // src/contexts/UserPreferencesContext.tsx
 "use client";
 
@@ -7,7 +6,7 @@ import React, { createContext, useState, useEffect, useContext, useCallback } fr
 import { db } from '@/lib/firebase';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import type { UserPreferences } from '@/types/preferences';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from '@/hooks/useAuth'; // Ensure this path is correct
 
 interface UserPreferencesContextType {
   preferences: UserPreferences | null;
@@ -25,7 +24,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  const userId = user?.email; // Using email as userId for now, as per current mock auth
+  const userId = user?.uid; // Using user.uid from Firebase Auth
 
   useEffect(() => {
     if (authIsLoading) {
@@ -41,7 +40,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
 
     setIsLoading(true);
     setError(null);
-    const prefDocRef = doc(db, 'userPreferences', userId);
+    const prefDocRef = doc(db, 'userPreferences', userId); // Use userId (which is uid)
 
     const unsubscribe = onSnapshot(prefDocRef, (docSnap) => {
       if (docSnap.exists()) {
@@ -68,8 +67,9 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
     }
     const prefDocRef = doc(db, 'userPreferences', userId);
     try {
-      await setDoc(prefDocRef, newPrefs, { merge: true });
-      // Snapshot listener will update local state
+      // Ensure we merge, so if a new field is added to UserPreferences type later, 
+      // it doesn't wipe out existing fields not part of this specific update.
+      await setDoc(prefDocRef, newPrefs, { merge: true }); 
     } catch (err: any) {
       console.error("Error updating user preferences in Firestore:", err);
       setError(err);

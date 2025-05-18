@@ -2,28 +2,30 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 
-const AUTH_COOKIE_NAME = 'homepilot_user_token'; 
+const AUTH_FLAG_COOKIE_NAME = 'homepilot_auth_flag'; // New flag cookie
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const isAuthenticated = !!request.cookies.get(AUTH_COOKIE_NAME)?.value;
+  const isAuthenticatedByFlag = !!request.cookies.get(AUTH_FLAG_COOKIE_NAME)?.value;
 
-  // If trying to access login page while already authenticated, redirect to dashboard
-  if (pathname === '/login' && isAuthenticated) {
+  // If trying to access login page while authenticated flag is set, redirect to dashboard
+  if (pathname === '/login' && isAuthenticatedByFlag) {
     return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 
-  // If trying to access a protected app route (e.g., /dashboard/*) and not authenticated, redirect to login
-  if (pathname.startsWith('/dashboard') && !isAuthenticated) {
+  // If trying to access a protected app route (e.g., /dashboard/*, /manage-devices, /settings) 
+  // and not authenticated flag is set, redirect to login
+  const protectedPaths = ['/dashboard', '/manage-devices', '/settings'];
+  if (protectedPaths.some(p => pathname.startsWith(p)) && !isAuthenticatedByFlag) {
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('redirectedFrom', pathname);
     return NextResponse.redirect(loginUrl);
   }
   
   // Handle the root path ("/")
-  // If authenticated, redirect to dashboard. Otherwise, redirect to login.
+  // If authenticated flag is set, redirect to dashboard. Otherwise, redirect to login.
   if (pathname === '/') {
-    if (isAuthenticated) {
+    if (isAuthenticatedByFlag) {
       return NextResponse.redirect(new URL('/dashboard', request.url));
     } else {
       return NextResponse.redirect(new URL('/login', request.url));
