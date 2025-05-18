@@ -13,7 +13,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Eye, EyeOff, LogIn } from 'lucide-react';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
-import { useRouter } from 'next/navigation'; // Import useRouter
+import { useRouter } from 'next/navigation';
 
 const loginSchema = z.object({
   email: z.string().email({ message: "Invalid email address." }),
@@ -24,7 +24,7 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 
 export function LoginForm() {
   const { login } = useAuth();
-  const router = useRouter(); // Initialize router
+  const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
@@ -48,8 +48,8 @@ export function LoginForm() {
       
       login(data.email); // Update auth context state and localStorage
       
-      // Navigate to dashboard
-      router.push('/dashboard');
+      // Navigate to root, let HomePage or middleware handle redirect to dashboard
+      router.push('/');
 
     } catch (error) {
       console.error("Login attempt failed:", error);
@@ -58,11 +58,13 @@ export function LoginForm() {
         description: "An unexpected error occurred. Please try again.",
         variant: "destructive",
       });
+      // If an error occurs before/during navigation, ensure isLoading is reset
+      setIsLoading(false); 
     } finally {
-      // This ensures that isLoading is set to false after the login attempt,
-      // regardless of whether the try block succeeded or an error occurred.
-      // If the component unmounts due to navigation before this line, React handles it gracefully.
-      if (typeof window !== 'undefined') { // Check if still in browser context
+      // This finally block ensures isLoading is reset if the component doesn't unmount
+      // (e.g., if router.push('/') has an issue or for some reason doesn't unmount immediately)
+      // or if an error wasn't caught by the catch block (less likely).
+      if (typeof window !== 'undefined') { 
          setIsLoading(false);
       }
     }
