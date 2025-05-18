@@ -12,6 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { useAuth } from '@/hooks/useAuth';
 import { Eye, EyeOff, LogIn } from 'lucide-react';
 import Link from 'next/link';
+import { useToast } from '@/hooks/use-toast';
 
 const loginSchema = z.object({
   email: z.string().email({ message: "Invalid email address." }),
@@ -24,6 +25,7 @@ export function LoginForm() {
   const { login } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const { toast } = useToast();
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -35,13 +37,33 @@ export function LoginForm() {
 
   const onSubmit = async (data: LoginFormValues) => {
     setIsLoading(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    // In middleware.ts, we'd set a cookie. For client-side, AuthContext handles localStorage.
-    // To make middleware work with this mock, we'll set a dummy cookie here.
-    document.cookie = "homepilot_user_token=mock_token; path=/; max-age=3600"; // Expires in 1 hour
-    login(data.email);
-    // No need to setLoading(false) as login() will redirect.
+    try {
+      // Simulate API call
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // To make middleware work with this mock, we set a dummy cookie here.
+      document.cookie = "homepilot_user_token=mock_token; path=/; max-age=3600; SameSite=Lax"; // Expires in 1 hour
+      
+      login(data.email); // This initiates the login process (sets localStorage, context state, and calls router.push)
+      // The AuthContext's login function will handle the redirect.
+      // If the redirect is fast, this component will unmount.
+      // If not, setIsLoading(false) in the finally block will clear the spinner.
+
+    } catch (error) {
+      console.error("Login attempt failed:", error);
+      toast({
+        title: "Login Failed",
+        description: "An unexpected error occurred. Please try again.",
+        variant: "destructive",
+      });
+      // If an error occurs before login() is called or if login() itself could throw (it's sync here),
+      // then `setIsLoading(false)` is crucial here too. The finally block covers it.
+    } finally {
+      // This ensures that isLoading is set to false after the login attempt,
+      // regardless of whether the try block succeeded or an error occurred (that wasn't caught and rethrown).
+      // If the component unmounts due to navigation before this line, React handles it gracefully.
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -63,6 +85,7 @@ export function LoginForm() {
               placeholder="name@example.com"
               {...form.register("email")}
               className="bg-input/50"
+              disabled={isLoading}
             />
             {form.formState.errors.email && (
               <p className="text-sm text-destructive">{form.formState.errors.email.message}</p>
@@ -77,6 +100,7 @@ export function LoginForm() {
                 placeholder="••••••••"
                 {...form.register("password")}
                 className="bg-input/50"
+                disabled={isLoading}
               />
               <Button
                 type="button"
@@ -84,6 +108,7 @@ export function LoginForm() {
                 size="icon"
                 className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 onClick={() => setShowPassword(!showPassword)}
+                disabled={isLoading}
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 <span className="sr-only">{showPassword ? "Hide password" : "Show password"}</span>
