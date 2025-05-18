@@ -2,7 +2,7 @@
 import type { Device } from '@/types/home-assistant';
 import { Lightbulb, Power, Wind, Zap, HelpCircle } from 'lucide-react';
 
-const SMART_HOME_API_URL = 'https://smarthome.tkv.in.net/smarthome'; // Ensure this is HTTPS if your server supports it. If not, use HTTP.
+const SMART_HOME_API_URL = 'https://smarthome.tkv.in.net/smarthome';
 
 // Helper to generate a unique request ID (simple version)
 const generateRequestId = (): string => {
@@ -49,7 +49,9 @@ const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
 // Fetches the list of devices from your bridge (SYNC intent)
 export const fetchDevicesFromApi = async (): Promise<Device[]> => {
   try {
-    const response = await fetch(SMART_HOME_API_URL, {
+    // Construct the specific URL for the SYNC operation as per user request
+    const syncEndpointUrl = `${SMART_HOME_API_URL}/sync`;
+    const response = await fetch(syncEndpointUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -92,7 +94,7 @@ export const fetchDevicesFromApi = async (): Promise<Device[]> => {
 export const queryDeviceStatesFromApi = async (deviceIds: string[]): Promise<Record<string, { state: 'on' | 'off' | 'unknown'; online: boolean }>> => {
   if (deviceIds.length === 0) return {};
   try {
-    const response = await fetch(SMART_HOME_API_URL, {
+    const response = await fetch(SMART_HOME_API_URL, { // Uses the base URL
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -139,7 +141,7 @@ export const executeDeviceCommandOnApi = async (
   params: Record<string, any> // e.g., { "on": true }
 ): Promise<{ success: boolean; newState?: 'on' | 'off' }> => {
   try {
-    const response = await fetch(SMART_HOME_API_URL, {
+    const response = await fetch(SMART_HOME_API_URL, { // Uses the base URL
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
