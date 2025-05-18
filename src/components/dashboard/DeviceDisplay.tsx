@@ -1,3 +1,4 @@
+
 // src/components/dashboard/DeviceDisplay.tsx
 "use client";
 
@@ -7,7 +8,7 @@ import {
   fetchDevicesFromApi, 
   queryDeviceStatesFromApi, 
   executeDeviceCommandOnApi 
-} from '@/services/homeAssistantService'; // Updated import
+} from '@/services/homeAssistantService';
 import { DeviceCard } from './DeviceCard';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -43,9 +44,15 @@ export function DeviceDisplay() {
           setDevices([]);
         }
       } catch (err: any) {
-        console.error("Failed to fetch devices from API:", err);
-        setError(err.message || "Could not load devices. Please check the connection to the smart home bridge.");
-        setDevices([]); // Clear devices on error
+        console.error("Failed to fetch devices or their states from API. Full error object:", err);
+        let displayError = "Could not load devices. Please check the connection to the smart home bridge or see browser console for details.";
+        if (err && err.message) {
+            displayError = `Error: ${err.message}. Check browser console for more details.`;
+        } else if (typeof err === 'string') {
+            displayError = `Error: ${err}. Check browser console for more details.`;
+        }
+        setError(displayError);
+        setDevices([]);
       } finally {
         setIsLoading(false);
       }
@@ -58,11 +65,9 @@ export function DeviceDisplay() {
     const device = devices.find(d => d.id === deviceId);
     if (!device) return;
 
-    // For toggleable devices, currentDeviceState should be 'on' or 'off'
     const currentOnState = currentDeviceState === 'on';
     const targetOnState = !currentOnState;
 
-    // Optimistically update UI
     setDevices(prevDevices =>
       prevDevices.map(d =>
         d.id === deviceId ? { ...d, state: targetOnState ? 'on' : 'off' } : d
@@ -72,7 +77,7 @@ export function DeviceDisplay() {
     try {
       const result = await executeDeviceCommandOnApi(
         deviceId,
-        'action.devices.commands.OnOff', // Standard OnOff command
+        'action.devices.commands.OnOff',
         { on: targetOnState }
       );
 
@@ -81,7 +86,6 @@ export function DeviceDisplay() {
           title: "Command Sent",
           description: `${device.name} turned ${targetOnState ? 'ON' : 'OFF'}.`,
         });
-        // Optionally, re-query state for this device or trust the result
         if (result.newState !== undefined) {
            setDevices(prevDevices =>
             prevDevices.map(d =>
@@ -89,15 +93,19 @@ export function DeviceDisplay() {
             )
           );
         } else {
-          // If API doesn't return new state, re-query just this device after a short delay
           setTimeout(async () => {
-            const updatedStates = await queryDeviceStatesFromApi([deviceId]);
-            if (updatedStates[deviceId]) {
-              setDevices(prevDevices =>
-                prevDevices.map(d =>
-                  d.id === deviceId ? { ...d, state: updatedStates[deviceId].state, online: updatedStates[deviceId].online } : d
-                )
-              );
+            try {
+              const updatedStates = await queryDeviceStatesFromApi([deviceId]);
+              if (updatedStates[deviceId]) {
+                setDevices(prevDevices =>
+                  prevDevices.map(d =>
+                    d.id === deviceId ? { ...d, state: updatedStates[deviceId].state, online: updatedStates[deviceId].online } : d
+                  )
+                );
+              }
+            } catch (queryError) {
+              console.error(`Failed to re-query state for ${deviceId} after command:`, queryError);
+              // Potentially revert or show specific error for this device
             }
           }, 1000);
         }
@@ -107,7 +115,6 @@ export function DeviceDisplay() {
           description: `Could not change ${device.name} state. Reverting UI.`,
           variant: "destructive",
         });
-        // Revert optimistic update
         setDevices(prevDevices =>
           prevDevices.map(d =>
             d.id === deviceId ? { ...d, state: currentOnState ? 'on' : 'off' } : d
@@ -120,7 +127,6 @@ export function DeviceDisplay() {
         description: `Error controlling ${device.name}: ${err.message}. Reverting UI.`,
         variant: "destructive",
       });
-       // Revert optimistic update
        setDevices(prevDevices =>
         prevDevices.map(d =>
           d.id === deviceId ? { ...d, state: currentOnState ? 'on' : 'off' } : d
@@ -163,7 +169,7 @@ export function DeviceDisplay() {
         <AlertTitle>No Devices Found</AlertTitle>
         <AlertDescription>
           Could not find any devices from your smart home bridge. 
-          Please ensure it's running and correctly configured.
+          Please ensure it's running, correctly configured, and accessible.
         </AlertDescription>
       </Alert>
     );
