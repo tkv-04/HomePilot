@@ -1,15 +1,17 @@
+
 // src/components/dashboard/DeviceCard.tsx
 "use client";
 
 import type { Device } from '@/types/home-assistant';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Lightbulb, Thermometer, Droplets, Power, Tv, Wind, Zap } from 'lucide-react'; // Added Zap as default
-import { Switch as UISwitch } from '@/components/ui/switch'; // For light/switch toggles (display only for now)
+import { Lightbulb, Thermometer, Droplets, Power, Tv, Wind, Zap } from 'lucide-react';
+import { Switch as UISwitch } from '@/components/ui/switch';
 import { Progress } from '@/components/ui/progress';
 
 interface DeviceCardProps {
   device: Device;
+  onToggleState?: (deviceId: string, currentState: 'on' | 'off') => void;
 }
 
 const getDeviceIcon = (device: Device): React.ElementType => {
@@ -27,7 +29,7 @@ const getDeviceIcon = (device: Device): React.ElementType => {
         case 'power':
           return Power;
         default:
-          return Zap; // Generic sensor icon
+          return Zap; 
       }
     case 'switch':
       return Power;
@@ -36,25 +38,34 @@ const getDeviceIcon = (device: Device): React.ElementType => {
     case 'climate':
       return Wind;
     default:
-      return Zap; // Default icon for unknown types
+      return Zap; 
   }
 };
 
-export function DeviceCard({ device }: DeviceCardProps) {
+export function DeviceCard({ device, onToggleState }: DeviceCardProps) {
   const IconComponent = getDeviceIcon(device);
+
+  const handleToggle = () => {
+    if (onToggleState && (device.type === 'light' || device.type === 'switch')) {
+      onToggleState(device.id, device.state as 'on' | 'off');
+    }
+  };
 
   const renderStateInfo = () => {
     switch (device.type) {
       case 'light':
       case 'switch':
+        const isChecked = device.state === 'on';
         return (
           <div className="flex items-center space-x-2">
             <UISwitch
-              checked={device.state === 'on'}
-              aria-readonly
-              className="cursor-default"
+              checked={isChecked}
+              onCheckedChange={handleToggle}
+              aria-label={`Toggle ${device.name}`}
+              className={onToggleState ? "cursor-pointer" : "cursor-default"}
+              disabled={!onToggleState}
             />
-            <span className={`capitalize text-sm ${device.state === 'on' ? 'text-accent' : 'text-muted-foreground'}`}>
+            <span className={`capitalize text-sm ${isChecked ? 'text-accent' : 'text-muted-foreground'}`}>
               {device.state}
             </span>
             {device.type === 'light' && device.attributes?.brightness !== undefined && device.state === 'on' && (

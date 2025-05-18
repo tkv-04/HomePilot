@@ -1,18 +1,21 @@
+
 // src/components/dashboard/DeviceDisplay.tsx
 "use client";
 
 import { useEffect, useState } from 'react';
-import type { Device } from '@/types/home-assistant';
+import type { Device, LightDevice, SwitchDevice } from '@/types/home-assistant';
 import { fetchDevices } from '@/services/homeAssistantService';
 import { DeviceCard } from './DeviceCard';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ServerCrash } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
 export function DeviceDisplay() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
 
   useEffect(() => {
     const loadDevices = async () => {
@@ -31,6 +34,26 @@ export function DeviceDisplay() {
 
     loadDevices();
   }, []);
+
+  const handleToggleDeviceState = (deviceId: string, currentState: 'on' | 'off') => {
+    setDevices(prevDevices =>
+      prevDevices.map(device => {
+        if (device.id === deviceId && (device.type === 'light' || device.type === 'switch')) {
+          const newDeviceState = currentState === 'on' ? 'off' : 'on';
+          toast({
+            title: "Device Control Simulated",
+            description: `${device.name} turned ${newDeviceState}.`,
+          });
+          return { ...device, state: newDeviceState } as LightDevice | SwitchDevice;
+        }
+        return device;
+      })
+    );
+    // In a real app, you would call a service here to update Home Assistant
+    // For example: await updateHomeAssistantDeviceState(deviceId, newState);
+    console.log(`Simulated toggling ${deviceId}. New state would be: ${currentState === 'on' ? 'off' : 'on'}`);
+  };
+
 
   if (isLoading) {
     return (
@@ -68,23 +91,16 @@ export function DeviceDisplay() {
     );
   }
 
-  // Group devices by type for potentially different section rendering in future
-  const groupedDevices: { [key: string]: Device[] } = devices.reduce((acc, device) => {
-    const type = device.type || 'other';
-    if (!acc[type]) {
-      acc[type] = [];
-    }
-    acc[type].push(device);
-    return acc;
-  }, {} as { [key: string]: Device[] });
-
-
   return (
     <div>
       <h2 className="text-2xl font-semibold mb-6 text-center">Your Devices</h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
         {devices.map((device) => (
-          <DeviceCard key={device.id} device={device} />
+          <DeviceCard 
+            key={device.id} 
+            device={device} 
+            onToggleState={ (device.type === 'light' || device.type === 'switch') ? handleToggleDeviceState : undefined}
+          />
         ))}
       </div>
     </div>
