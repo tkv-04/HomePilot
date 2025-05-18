@@ -17,7 +17,7 @@ import { useToast } from '@/hooks/use-toast';
 interface MockSpeechRecognition {
   start: () => void;
   stop: () => void;
-  onresult?: (event: { results: { transcript: string; isFinal: boolean }[][] }) => void;
+  onresult?: (event: { results: { transcript: string; isFinal: boolean }[][] , resultIndex: number }) => void;
   onerror?: (event: { error: string; message: string }) => void;
   onend?: () => void;
   onstart?: () => void;
@@ -46,6 +46,7 @@ interface VoiceControlProps {
 }
 
 const WAKE_WORD = "jarvis";
+const COMMAND_WAIT_TIMEOUT = 4000; // 4 seconds to state command after wake word
 
 export function VoiceControl({ selectedDevices }: VoiceControlProps) {
   const [commandText, setCommandText] = useState("");
@@ -55,17 +56,25 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
   const [feedbackType, setFeedbackType] = useState<'success' | 'error' | 'info' | null>(null);
   
   const [speechApiAvailable, setSpeechApiAvailable] = useState(false);
-  const [userDesiredListening, setUserDesiredListening] = useState(false); // User's intent to listen
-  const [micActuallyActive, setMicActuallyActive] = useState(false); // Actual mic hardware state
+  const [userDesiredListening, setUserDesiredListening] = useState(false);
+  const [micActuallyActive, setMicActuallyActive] = useState(false);
   const [micPermissionError, setMicPermissionError] = useState<string | null>(null);
+  const [isWaitingForCommandAfterWakeWord, setIsWaitingForCommandAfterWakeWord] = useState(false);
 
   const { toast } = useToast();
   const recognitionRef = useRef<MockSpeechRecognition | null>(null);
-  const isProcessingCommandRef = useRef(isProcessingCommand); // Ref to track processing state
+  const isProcessingCommandRef = useRef(isProcessingCommand);
+  const waitForCommandTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isWaitingForCommandAfterWakeWordRef = useRef(isWaitingForCommandAfterWakeWord);
+
 
   useEffect(() => {
     isProcessingCommandRef.current = isProcessingCommand;
   }, [isProcessingCommand]);
+
+  useEffect(() => {
+    isWaitingForCommandAfterWakeWordRef.current = isWaitingForCommandAfterWakeWord;
+  }, [isWaitingForCommandAfterWakeWord]);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition)) {
@@ -78,8 +87,8 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
           recognitionRef.current.interimResults = false; 
           recognitionRef.current.maxAlternatives = 1;
           setSpeechApiAvailable(true);
-          if (!micPermissionError) { // Only set to true if no prior permission error
-            setUserDesiredListening(true); // Attempt to start listening on load
+          if (!micPermissionError) {
+            setUserDesiredListening(true);
           }
         } catch (e) {
             console.error("Error initializing SpeechRecognition:", e);
@@ -93,50 +102,102 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
       setMicPermissionError("Voice recognition is not supported by your browser.");
     }
 
-    return () => { // Cleanup
+    return () => {
       if (recognitionRef.current && micActuallyActive) {
         try {
           recognitionRef.current.stop();
-          recognitionRef.current.abort(); // Ensure it really stops
-        } catch (e) {
-            // console.warn("Error stopping recognition on unmount:", e);
-        }
+          recognitionRef.current.abort();
+        } catch (e) {}
       }
-       setUserDesiredListening(false); // Explicitly stop listening intent on unmount
+      setUserDesiredListening(false);
+      if (waitForCommandTimeoutRef.current) {
+        clearTimeout(waitForCommandTimeoutRef.current);
+      }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [micPermissionError]); // Re-run if micPermissionError changes to potentially re-initialize if error clears
+  }, [micPermissionError]);
 
   const handleInterpretAndExecuteCommand = useCallback(async (fullTranscript: string) => {
-    if (!fullTranscript.trim()) {
+    // Allow empty transcript if we are specifically waiting for a command part that might be silence (timeout will handle)
+    if (!fullTranscript.trim() && !isWaitingForCommandAfterWakeWordRef.current) {
+      setIsProcessingCommand(false); // Ensure processing is false if no transcript
       return; 
     }
     
-    setIsProcessingCommand(true);
-    setInterpretedResult(null);
-    setFeedbackMessage("Processing command..."); // Generic initial message
-    setFeedbackType('info');
+    // If a command is already being fully processed by Genkit/API, ignore new speech,
+    // UNLESS we are specifically in the state of waiting for a command part.
+    if (isProcessingCommandRef.current && !isWaitingForCommandAfterWakeWordRef.current) {
+       console.log("Still processing previous command, new speech result ignored.");
+       return;
+    }
+    
+    // Clear any pending "wait for command" timeout as new speech has arrived or we are definitely processing.
+    if (waitForCommandTimeoutRef.current) {
+      clearTimeout(waitForCommandTimeoutRef.current);
+      waitForCommandTimeoutRef.current = null;
+    }
 
     const lowerCaseTranscript = fullTranscript.toLowerCase();
-    let commandToInterpret = "";
+    let commandToInterpret = ""; 
 
-    if (lowerCaseTranscript.startsWith(WAKE_WORD.toLowerCase())) {
-      commandToInterpret = fullTranscript.substring(WAKE_WORD.length).trim();
-       if (!commandToInterpret) { 
-         setFeedbackMessage(`Yes? Please state your command after "${WAKE_WORD}". Or type your command.`);
-         setFeedbackType('info');
-         setCommandText(""); 
-         setIsProcessingCommand(false);
-         return;
-       }
-    } else { 
+    if (isWaitingForCommandAfterWakeWordRef.current) {
+      setIsWaitingForCommandAfterWakeWord(false); // Consume the waiting state
+      if (!fullTranscript.trim()) {
+        setFeedbackMessage(`No command given after "${WAKE_WORD}". Try again.`);
+        setFeedbackType('info');
+        setCommandText(""); // Clear previous "Jarvis" or command part
+        setIsProcessingCommand(false); 
+        return;
+      }
+      // User provided the command part
+      commandToInterpret = fullTranscript.trim();
+      setCommandText(commandToInterpret); // Display just the command part
+      // Proceed to interpret commandToInterpret
+    } else if (lowerCaseTranscript.startsWith(WAKE_WORD.toLowerCase())) {
+      const commandPartAfterWakeWord = fullTranscript.substring(WAKE_WORD.length).trim();
+      
+      if (!commandPartAfterWakeWord) {
+        // Only "Jarvis" was detected
+        setFeedbackMessage(`"${WAKE_WORD}" detected. Waiting for your command...`);
+        setFeedbackType('info');
+        setCommandText(""); // Clear text field, about to listen for command
+        setIsWaitingForCommandAfterWakeWord(true);
+        setIsProcessingCommand(false); // Not processing Genkit/API yet, just waiting for more speech
+
+        waitForCommandTimeoutRef.current = setTimeout(() => {
+          if (isWaitingForCommandAfterWakeWordRef.current) { // Check ref inside timeout
+            setFeedbackMessage(`Timed out waiting for command after "${WAKE_WORD}". Please try again.`);
+            setFeedbackType('info');
+            setIsWaitingForCommandAfterWakeWord(false);
+            setCommandText(""); 
+          }
+        }, COMMAND_WAIT_TIMEOUT);
+        return; // Exit, wait for next speech input (mic will restart via onend)
+      }
+      // "Jarvis + command" detected in one go
+      commandToInterpret = commandPartAfterWakeWord;
+      setCommandText(commandToInterpret); // Display the command part
+    } else {
+      // No wake word and not waiting for command part
       setFeedbackMessage(`Please start your command with "${WAKE_WORD}". You said: "${fullTranscript}"`);
       setFeedbackType('info');
+      setCommandText(fullTranscript); // Show what was said
       setIsProcessingCommand(false);
       return;
     }
+
+    // If we've reached here, we have a commandToInterpret.
+    if (!commandToInterpret.trim()) {
+        setFeedbackMessage("No command to process. Please try again.");
+        setFeedbackType('info');
+        setCommandText(""); // Clear display
+        setIsProcessingCommand(false);
+        return;
+    }
     
-    setCommandText(commandToInterpret); 
+    // --- Start actual processing with Genkit/API ---
+    setIsProcessingCommand(true); 
+    setInterpretedResult(null);
     setFeedbackMessage(`Interpreting: "${commandToInterpret}"`);
     setFeedbackType('info');
 
@@ -216,7 +277,6 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
       return;
     }
 
-    // Feedback already set to "Sending command..."
     try {
       const execResult = await executeDeviceCommandOnApi(targetDevice.id, apiCommand, apiParams);
       if (execResult.success) {
@@ -239,17 +299,20 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
     } finally {
       setIsProcessingCommand(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [toast, selectedDevices]); 
 
   useEffect(() => {
     const currentRecognition = recognitionRef.current;
     if (!currentRecognition || !speechApiAvailable) return;
 
-    currentRecognition.onresult = (event: any) => {
-      if (isProcessingCommandRef.current) {
-         console.log("Still processing previous command, new speech result ignored.");
+    currentRecognition.onresult = (event: any) => { // `event.resultIndex` is part of the spec
+      // If already processing a command with Genkit/API, and not in "waiting for command part" mode, ignore.
+      if (isProcessingCommandRef.current && !isWaitingForCommandAfterWakeWordRef.current) {
+         console.log("Still processing previous Genkit/API command, new speech result ignored.");
          return;
       }
+      // Get the transcript of the most recent finalized speech segment
       const transcript = event.results[event.results.length - 1][0].transcript.trim();
       handleInterpretAndExecuteCommand(transcript); 
     };
@@ -260,14 +323,17 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
       let showToast = true;
       let newMicPermissionError = micPermissionError;
 
+      if (isWaitingForCommandAfterWakeWordRef.current) {
+          setIsWaitingForCommandAfterWakeWord(false); // If an error occurs while waiting, reset the state.
+          if (waitForCommandTimeoutRef.current) clearTimeout(waitForCommandTimeoutRef.current);
+      }
+
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         newMicPermissionError = "Microphone access denied. Please enable it in your browser settings. You may need to refresh after enabling.";
-        setUserDesiredListening(false); // Stop trying if permission denied
+        setUserDesiredListening(false); 
       } else if (event.error === 'no-speech') {
-        // This is common if silence is detected. Don't show error, just let it restart if still desired.
         showToast = false; 
       } else if (event.error === 'aborted') {
-        // Often happens if stop() is called or page navigates. Don't treat as error.
         showToast = false;
       } else if (event.error === 'audio-capture') {
          newMicPermissionError = "Audio capture failed. Check microphone hardware/permissions.";
@@ -285,51 +351,63 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
 
     currentRecognition.onstart = () => {
       setMicActuallyActive(true);
-      setMicPermissionError(null); // Clear previous errors if mic successfully starts
+      setMicPermissionError(null); 
     };
 
     currentRecognition.onend = () => {
       setMicActuallyActive(false);
-      // Only restart if user still wants to listen, API is available, no perm error, and NOT currently processing a command
-      if (userDesiredListening && speechApiAvailable && !micPermissionError && !isProcessingCommandRef.current) { 
+      // Only restart if user still wants to listen, API is available, no perm error, 
+      // AND not currently processing a command with Genkit/API,
+      // AND not currently in the middle of a "waiting for command after wake word" timeout.
+      if (userDesiredListening && speechApiAvailable && !micPermissionError && 
+          !isProcessingCommandRef.current && !isWaitingForCommandAfterWakeWordRef.current) { 
         try {
-          // Small delay before restarting, helps prevent rapid restart issues on some browsers
           setTimeout(() => {
-            // Re-check conditions before starting, as state might have changed during timeout
-            if (userDesiredListening && recognitionRef.current && !micActuallyActive && !isProcessingCommandRef.current && !micPermissionError) {
+            if (userDesiredListening && recognitionRef.current && !micActuallyActive && 
+                !isProcessingCommandRef.current && !isWaitingForCommandAfterWakeWordRef.current && !micPermissionError) {
                recognitionRef.current.start();
             }
           }, 250); 
         } catch (e: any) {
-          // Avoid console spam for 'InvalidStateError' which can happen if stop() was called rapidly
           if (e.name !== 'InvalidStateError') { 
             console.error("Error restarting recognition in onend:", e.name, e.message);
             setMicPermissionError("Failed to restart voice recognition. Please try toggling the mic button.");
-            setUserDesiredListening(false); // Stop trying if restart fails critically
+            setUserDesiredListening(false); 
           }
         }
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [speechApiAvailable, userDesiredListening, handleInterpretAndExecuteCommand, toast]); // Removed micPermissionError from dep array here to avoid loops if error occurs in onend
+  }, [speechApiAvailable, userDesiredListening, handleInterpretAndExecuteCommand, toast]);
 
-  // Effect to manage starting/stopping recognition based on userDesiredListening and micPermissionError
   useEffect(() => {
-    if (!speechApiAvailable || !recognitionRef.current || isProcessingCommandRef.current) return;
+    if (!speechApiAvailable || !recognitionRef.current) return;
+
+    // Do not start if already processing a command OR if currently waiting for command after wake word (the timeout will handle)
+    if (isProcessingCommandRef.current || isWaitingForCommandAfterWakeWordRef.current) {
+        if(micActuallyActive){ // If it's active but we decided not to restart, stop it.
+            try { recognitionRef.current.stop(); } catch(e) {}
+        }
+        return;
+    }
 
     if (userDesiredListening && !micActuallyActive && !micPermissionError) {
       try {
         recognitionRef.current.start();
       } catch (e: any) {
-        if (e.name !== 'InvalidStateError') { // Ignore if already started/stopped
+        if (e.name !== 'InvalidStateError') {
            console.error("Error starting recognition:", e.name, e.message);
            setMicPermissionError("Could not start microphone. Check permissions or if another app is using it.");
-           setUserDesiredListening(false); // Stop trying if start fails
+           setUserDesiredListening(false); 
         }
       }
     } else if (!userDesiredListening && micActuallyActive) {
       try {
         recognitionRef.current.stop();
+         if (isWaitingForCommandAfterWakeWordRef.current) { // If user stops mic while waiting for cmd
+            setIsWaitingForCommandAfterWakeWord(false);
+            if (waitForCommandTimeoutRef.current) clearTimeout(waitForCommandTimeoutRef.current);
+        }
       } catch (e:any) {
          if (e.name !== 'InvalidStateError') {
             console.error("Error stopping recognition:", e.name, e.message);
@@ -337,7 +415,7 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userDesiredListening, micActuallyActive, speechApiAvailable, micPermissionError, isProcessingCommand]);
+  }, [userDesiredListening, micActuallyActive, speechApiAvailable, micPermissionError, isProcessingCommand, isWaitingForCommandAfterWakeWord]);
 
 
   const handleMicButtonClick = () => {
@@ -345,17 +423,41 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
       toast({ title: "Voice Not Supported", description: "Your browser doesn't support voice input.", variant: "destructive" });
       return;
     }
-    // If there was a permission error, clicking the button again indicates user wants to retry
     if (micPermissionError && !micActuallyActive) { 
-        setMicPermissionError(null); // Clear error to allow re-attempt
+        setMicPermissionError(null); 
     }
+    // If currently waiting for command after wake word and user clicks mic, cancel waiting.
+    if (isWaitingForCommandAfterWakeWordRef.current) {
+        setIsWaitingForCommandAfterWakeWord(false);
+        if (waitForCommandTimeoutRef.current) {
+            clearTimeout(waitForCommandTimeoutRef.current);
+            waitForCommandTimeoutRef.current = null;
+        }
+        setFeedbackMessage("Command cancelled.");
+        setFeedbackType("info");
+    }
+
     setUserDesiredListening(prev => !prev);
   };
   
   const handleSubmitTextCommand = (event: FormEvent) => {
     event.preventDefault();
     if (isProcessingCommandRef.current || !commandText.trim()) return;
-    // Prepend wake word for consistency with voice flow, as Genkit prompt might expect it
+
+    // If currently waiting for voice command part, cancel that
+    if (isWaitingForCommandAfterWakeWordRef.current) {
+        setIsWaitingForCommandAfterWakeWord(false);
+        if (waitForCommandTimeoutRef.current) {
+            clearTimeout(waitForCommandTimeoutRef.current);
+            waitForCommandTimeoutRef.current = null;
+        }
+    }
+    // The handleInterpretAndExecuteCommand expects the command part without "Jarvis" 
+    // if it's not in "isWaitingForCommandAfterWakeWord" mode.
+    // So, we directly send commandText to it, and it will check for wake word internally.
+    // For text submissions, we'll let handleInterpretAndExecuteCommand logic prepend Jarvis if needed
+    // by its structure.
+    // Correction: We should simulate as if "Jarvis" was spoken + command for text.
     handleInterpretAndExecuteCommand(`${WAKE_WORD} ${commandText}`);
   };
   
@@ -364,7 +466,7 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
       const IconComponent = device.icon;
       return <IconComponent className="h-5 w-5" />;
     }
-    if (!device || !device.type) return <Lightbulb className="h-5 w-5" />; // Default icon
+    if (!device || !device.type) return <Lightbulb className="h-5 w-5" />;
     
     const typeLower = device.type.toLowerCase();
     if (typeLower.includes("light")) return <Lightbulb className="h-5 w-5" />;
@@ -373,8 +475,16 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
     if (typeLower.includes("lock")) return <Lock className="h-5 w-5" />;
     if (typeLower.includes("fan")) return <Wind className="h-5 w-5" />;
     if (typeLower.includes("switch") || typeLower.includes("outlet")) return <Power className="h-5 w-5" />;
-    return <Lightbulb className="h-5 w-5" />; // Fallback default
+    return <Lightbulb className="h-5 w-5" />;
   };
+
+  const currentUiFeedback = isWaitingForCommandAfterWakeWord
+    ? `"${WAKE_WORD}" detected. Waiting for your command...`
+    : (micPermissionError ? `Mic Error: ${micPermissionError}` : 
+        (userDesiredListening ? 
+            (micActuallyActive ? `Listening... Say "${WAKE_WORD}" then your command.` : "Mic starting...") 
+            : "Voice control is idle. Click mic to start.")
+      );
 
   return (
     <div className="flex flex-col items-center justify-center p-4 space-y-8">
@@ -382,14 +492,7 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
         <CardHeader className="text-center">
           <CardTitle className="text-3xl font-bold">HomePilot Control</CardTitle>
           <CardDescription>
-            {speechApiAvailable ? 
-                (micPermissionError ? `Mic Error: ${micPermissionError}` : 
-                    (userDesiredListening ? 
-                        (micActuallyActive ? `Listening... Say "${WAKE_WORD}" then your command.` : "Mic starting...") 
-                        : "Voice control is idle. Click mic to start.")
-                ) 
-                : "Voice control not available in your browser."
-            }
+            {speechApiAvailable ? currentUiFeedback : "Voice control not available in your browser."}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -400,7 +503,7 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
               size="lg"
               className={`p-4 rounded-full transition-all duration-300 ease-in-out transform hover:scale-105 ${userDesiredListening && micActuallyActive ? 'animate-pulse bg-accent/30 border-accent' : 'border-primary/50'}`}
               aria-label={userDesiredListening ? "Stop listening" : "Start listening"}
-              disabled={!speechApiAvailable || isProcessingCommand} // Disable mic toggle while processing a command
+              disabled={!speechApiAvailable || (isProcessingCommand && !isWaitingForCommandAfterWakeWord)}
               title={!speechApiAvailable ? "Voice recognition not available" : (userDesiredListening ? "Stop automatic listening" : "Start automatic listening")}
             >
               {userDesiredListening && micActuallyActive ? <MicOff className={`h-8 w-8 text-destructive-foreground`} /> : <Mic className={`h-8 w-8 ${micPermissionError ? 'text-destructive' : 'text-primary'}`} />}
@@ -411,16 +514,16 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
                 placeholder={micActuallyActive ? `Say "${WAKE_WORD}" or type command` : (speechApiAvailable ? `Type command, e.g., 'Turn on light'` : "Type command (voice not available)")}
                 value={commandText}
                 onChange={(e) => setCommandText(e.target.value)}
-                disabled={isProcessingCommand}
+                disabled={isProcessingCommand && !isWaitingForCommandAfterWakeWord}
                 className="flex-grow text-lg p-3 bg-input/50 border-border focus:ring-accent"
               />
               <Button type="submit" size="lg" disabled={isProcessingCommand || !commandText.trim()} className="bg-primary hover:bg-primary/80">
-                {isProcessingCommand ? <Loader2 className="h-6 w-6 animate-spin" /> : <Send className="h-6 w-6" />}
+                {(isProcessingCommand && !isWaitingForCommandAfterWakeWord) ? <Loader2 className="h-6 w-6 animate-spin" /> : <Send className="h-6 w-6" />}
               </Button>
             </form>
           </div>
 
-          {isProcessingCommand && !feedbackMessage && ( // Fallback if feedback message isn't set quickly
+          {(isProcessingCommand && !isWaitingForCommandAfterWakeWord && !feedbackMessage) && (
             <div className="flex justify-center items-center p-4">
               <Loader2 className="h-12 w-12 animate-spin text-accent" />
               <p className="ml-3 text-lg text-muted-foreground">Processing command...</p>
@@ -464,7 +567,7 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
         </CardContent>
         <CardFooter className="text-center">
           <p className="text-xs text-muted-foreground">
-            {userDesiredListening ? (micActuallyActive ? `Listening for "${WAKE_WORD}"... ` : "Attempting to start mic... ") : "Automatic listening is off. "}
+            {userDesiredListening ? (micActuallyActive ? (isWaitingForCommandAfterWakeWord ? `Waiting for command after "${WAKE_WORD}"...` : `Listening for "${WAKE_WORD}"... `) : "Attempting to start mic... ") : "Automatic listening is off. "}
             Dashboard display updates separately.
           </p>
         </CardFooter>
@@ -473,17 +576,15 @@ export function VoiceControl({ selectedDevices }: VoiceControlProps) {
       <div className="w-full max-w-2xl p-4 bg-card/50 rounded-lg shadow">
         <h3 className="text-lg font-semibold mb-2 text-center text-foreground">Example Voice Commands</h3>
         <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground text-center">
-          <li>"{WAKE_WORD} turn on the kitchen lights"</li>
-          <li>"{WAKE_WORD} turn off the fan"</li>
-          <li>"{WAKE_WORD} activate the main light"</li>
+          <li>"{WAKE_WORD}" (pause) "turn on the kitchen lights"</li>
+          <li>"{WAKE_WORD} turn off the fan" (no pause)</li>
         </ul>
          <h3 className="text-lg font-semibold mt-4 mb-2 text-center text-foreground">Example Typed Commands</h3>
         <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground text-center">
-          <li>"Turn on the kitchen lights" (type this, "{WAKE_WORD}" will be prepended automatically)</li>
+          <li>"Turn on the kitchen lights"</li>
           <li>"Turn off the fan"</li>
         </ul>
       </div>
     </div>
   );
 }
-
