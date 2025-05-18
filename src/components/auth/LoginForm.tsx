@@ -53,7 +53,7 @@ export function LoginForm() {
       // Toast for success is handled in AuthContext now.
     } catch (error) {
       // Error toast is handled in AuthContext's login method.
-      console.error("Login attempt failed in form:", error);
+      console.error("Login attempt failed in LoginForm component:", error); // Added for more specific logging
     } finally {
       setIsSubmitting(false);
     }
