@@ -1,3 +1,4 @@
+
 // src/components/auth/LoginForm.tsx
 "use client";
 
@@ -13,7 +14,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { Eye, EyeOff, LogIn } from 'lucide-react';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
-import { useRouter } from 'next/navigation';
+// Import useRouter removed as we'll use window.location for this specific redirect
+// import { useRouter } from 'next/navigation';
 
 const loginSchema = z.object({
   email: z.string().email({ message: "Invalid email address." }),
@@ -24,7 +26,7 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 
 export function LoginForm() {
   const { login } = useAuth();
-  const router = useRouter();
+  // const router = useRouter(); // No longer directly used for dashboard redirect from here
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
@@ -48,8 +50,12 @@ export function LoginForm() {
       
       login(data.email); // Update auth context state and localStorage
       
-      // Navigate to root, let HomePage or middleware handle redirect to dashboard
-      router.push('/');
+      // Force a full page navigation to '/'
+      // This ensures the browser sends the newly set cookie with the request,
+      // allowing the middleware to reliably pick it up and redirect to /dashboard.
+      if (typeof window !== 'undefined') {
+        window.location.assign('/');
+      }
 
     } catch (error) {
       console.error("Login attempt failed:", error);
@@ -58,15 +64,26 @@ export function LoginForm() {
         description: "An unexpected error occurred. Please try again.",
         variant: "destructive",
       });
-      // If an error occurs before/during navigation, ensure isLoading is reset
+      // If an error occurs, ensure isLoading is reset
       setIsLoading(false); 
     } finally {
       // This finally block ensures isLoading is reset if the component doesn't unmount
-      // (e.g., if router.push('/') has an issue or for some reason doesn't unmount immediately)
-      // or if an error wasn't caught by the catch block (less likely).
-      if (typeof window !== 'undefined') { 
-         setIsLoading(false);
+      // (e.g. if window.location.assign has an issue or doesn't unmount immediately)
+      // or if an error wasn't caught by the catch block.
+      // This might not be strictly necessary if window.location.assign causes an unmount,
+      // but it's safer.
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/dashboard')) {
+         // Only set isLoading to false if we are not already navigating away
+         // (This condition might be tricky due to async nature of navigation)
+         // A more robust way is to rely on the component unmounting.
+         // For now, let's keep it to handle errors before navigation.
+         // If navigation is successful, the component unmounts, and this state doesn't matter.
       }
+      // A simpler approach for finally: if an error occurred and we didn't navigate, reset loading.
+      // The navigation itself will unmount the component, making setIsLoading(false) moot for success cases.
+      // So, it's mainly for the error path or if navigation fails.
+      // The previous 'setIsLoading(false)' in the catch block already handles explicit errors.
+      // Let's remove it from finally for now as window.location.assign will cause unmount.
     }
   };
 
@@ -146,3 +163,4 @@ export function LoginForm() {
     </Card>
   );
 }
+
