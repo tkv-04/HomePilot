@@ -1,9 +1,8 @@
-
 // src/components/dashboard/DeviceDisplay.tsx
 "use client";
 
 import type { Device } from '@/types/home-assistant';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { 
   fetchDevicesFromApi, 
   queryDeviceStatesFromApi, 
@@ -19,12 +18,22 @@ import { Button } from '@/components/ui/button';
 
 const SELECTED_DEVICES_LS_KEY = 'homepilot_selected_device_ids';
 
-export function DeviceDisplay() {
+interface DeviceDisplayProps {
+  onDevicesLoaded?: (devices: Device[]) => void;
+}
+
+export function DeviceDisplay({ onDevicesLoaded }: DeviceDisplayProps) {
   const [displayedDevices, setDisplayedDevices] = useState<Device[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hasSelectedDevices, setHasSelectedDevices] = useState(false);
   const { toast } = useToast();
+
+  const updateParentWithDevices = useCallback((devices: Device[]) => {
+    if (onDevicesLoaded) {
+      onDevicesLoaded(devices);
+    }
+  }, [onDevicesLoaded]);
 
   useEffect(() => {
     const loadDevices = async () => {
@@ -40,7 +49,7 @@ export function DeviceDisplay() {
             selectedIds = JSON.parse(storedSelection);
           } catch (e) {
             console.error("Failed to parse selected devices from localStorage", e);
-            localStorage.removeItem(SELECTED_DEVICES_LS_KEY); // Clear invalid data
+            localStorage.removeItem(SELECTED_DEVICES_LS_KEY);
           }
         }
       }
@@ -49,18 +58,15 @@ export function DeviceDisplay() {
 
       if (selectedIds.length === 0) {
         setIsLoading(false);
+        updateParentWithDevices([]);
         return;
       }
 
       try {
-        // Step 1: Fetch all devices to filter them
         const allFetchedDevices = await fetchDevicesFromApi();
-        
-        // Step 2: Filter devices based on selected IDs
         const devicesToQuery = allFetchedDevices.filter(device => selectedIds.includes(device.id));
 
         if (devicesToQuery.length > 0) {
-          // Step 3: Query states only for selected devices
           const deviceIdsToQuery = devicesToQuery.map(d => d.id);
           const states = await queryDeviceStatesFromApi(deviceIdsToQuery);
           
@@ -73,11 +79,12 @@ export function DeviceDisplay() {
             };
           });
           setDisplayedDevices(updatedDevices);
+          updateParentWithDevices(updatedDevices);
         } else {
-          // This case might happen if selected IDs don't match any fetched devices
-          setDisplayedDevices([]); 
-          if (allFetchedDevices.length > 0) { // if API returned devices but none were selected/matched
-             setHasSelectedDevices(true); // To avoid showing "No devices selected" if there were selections but they just didn't match
+          setDisplayedDevices([]);
+          updateParentWithDevices([]);
+          if (allFetchedDevices.length > 0) {
+             setHasSelectedDevices(true); 
           }
         }
       } catch (err: any) {
@@ -90,13 +97,14 @@ export function DeviceDisplay() {
         }
         setError(displayError);
         setDisplayedDevices([]);
+        updateParentWithDevices([]);
       } finally {
         setIsLoading(false);
       }
     };
 
     loadDevices();
-  }, []); // Re-run if user navigates back after changing selections? For now, manual refresh or header link click re-triggers.
+  }, [updateParentWithDevices]); // Added updateParentWithDevices to dependency array
 
   const handleToggleDeviceState = async (deviceId: string, currentDeviceState: Device['state']) => {
     const device = displayedDevices.find(d => d.id === deviceId);
@@ -105,17 +113,18 @@ export function DeviceDisplay() {
     const currentOnState = currentDeviceState === 'on';
     const targetOnState = !currentOnState;
 
-    // Optimistic UI update
-    setDisplayedDevices(prevDevices =>
-      prevDevices.map(d =>
-        d.id === deviceId ? { ...d, state: targetOnState ? 'on' : 'off' } : d
-      )
+    let newDeviceList = displayedDevices.map(d =>
+      d.id === deviceId ? { ...d, state: targetOnState ? 'on' : 'off' } : d
     );
+    setDisplayedDevices(newDeviceList);
+    // Optimistic update to parent
+    updateParentWithDevices(newDeviceList);
+
 
     try {
       const result = await executeDeviceCommandOnApi(
         deviceId,
-        'action.devices.commands.OnOff', // Assuming OnOff for toggleable devices
+        'action.devices.commands.OnOff',
         { on: targetOnState }
       );
 
@@ -124,55 +133,51 @@ export function DeviceDisplay() {
           title: "Command Sent",
           description: `${device.name} turned ${targetOnState ? 'ON' : 'OFF'}.`,
         });
-        // Update state from API if it differs or was provided
         if (result.newState !== undefined) {
-           setDisplayedDevices(prevDevices =>
-            prevDevices.map(d =>
-              d.id === deviceId ? { ...d, state: result.newState!, online: true } : d
-            )
+           newDeviceList = displayedDevices.map(d =>
+            d.id === deviceId ? { ...d, state: result.newState!, online: true } : d
           );
+          setDisplayedDevices(newDeviceList);
+          updateParentWithDevices(newDeviceList);
         } else {
-          // If API doesn't return new state, re-query after a delay
           setTimeout(async () => {
             try {
               const updatedStates = await queryDeviceStatesFromApi([deviceId]);
               if (updatedStates[deviceId]) {
-                setDisplayedDevices(prevDevices =>
-                  prevDevices.map(d =>
-                    d.id === deviceId ? { ...d, state: updatedStates[deviceId].state, online: updatedStates[deviceId].online } : d
-                  )
+                const refreshedDeviceList = displayedDevices.map(d =>
+                  d.id === deviceId ? { ...d, state: updatedStates[deviceId].state, online: updatedStates[deviceId].online } : d
                 );
+                setDisplayedDevices(refreshedDeviceList);
+                updateParentWithDevices(refreshedDeviceList);
               }
             } catch (queryError) {
               console.error(`Failed to re-query state for ${deviceId} after command:`, queryError);
             }
-          }, 1000); // 1 sec delay
+          }, 1000);
         }
-      } else { // Command failed as per API response
+      } else {
         toast({
           title: "Command Failed",
           description: `Could not change ${device.name} state. Reverting UI.`,
           variant: "destructive",
         });
-        // Revert optimistic update
-        setDisplayedDevices(prevDevices =>
-          prevDevices.map(d =>
-            d.id === deviceId ? { ...d, state: currentOnState ? 'on' : 'off' } : d
-          )
+        newDeviceList = displayedDevices.map(d =>
+          d.id === deviceId ? { ...d, state: currentOnState ? 'on' : 'off' } : d
         );
+        setDisplayedDevices(newDeviceList);
+        updateParentWithDevices(newDeviceList);
       }
-    } catch (err: any) { // Network or other API error
+    } catch (err: any) {
       toast({
         title: "API Error",
         description: `Error controlling ${device.name}: ${err.message}. Reverting UI.`,
         variant: "destructive",
       });
-       // Revert optimistic update
-       setDisplayedDevices(prevDevices =>
-        prevDevices.map(d =>
-          d.id === deviceId ? { ...d, state: currentOnState ? 'on' : 'off' } : d
-        )
+       newDeviceList = displayedDevices.map(d =>
+        d.id === deviceId ? { ...d, state: currentOnState ? 'on' : 'off' } : d
       );
+       setDisplayedDevices(newDeviceList);
+       updateParentWithDevices(newDeviceList);
     }
   };
 
