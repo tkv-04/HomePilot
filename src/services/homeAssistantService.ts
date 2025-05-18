@@ -1,8 +1,9 @@
+
 // src/services/homeAssistantService.ts
 import type { Device } from '@/types/home-assistant';
-import { Lightbulb, Power, Wind, Zap, HelpCircle } from 'lucide-react';
+import { Lightbulb, Power, Wind, Zap, HelpCircle, Thermometer, Droplets, Tv } from 'lucide-react';
 
-const SMART_HOME_API_URL = 'https://smarthome.tkv.in.net/smarthome';
+const SMART_HOME_API_URL = 'https://smarthome.tkv.in.net/smarthome'; // Base URL for all intents
 
 // Helper to generate a unique request ID (simple version)
 const generateRequestId = (): string => {
@@ -32,9 +33,15 @@ const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
       icon = Wind;
       break;
     // Add more mappings as needed for other device types your bridge supports
+    // For example, if your bridge supports thermostats:
+    // case 'action.devices.types.THERMOSTAT':
+    //   appType = 'climate'; // or 'thermostat' if you prefer
+    //   icon = Thermometer;
+    //   break;
     default:
       appType = 'unknown';
-      icon = Zap; // Default icon for truly unknown types if not covered by general 'unknown' above. HelpCircle is a good general fallback.
+      // Use a more generic icon for unknown types if not a specific category
+      icon = Zap; // Or keep HelpCircle if that's preferred for all unknown
   }
   return {
     type: appType,
@@ -49,9 +56,8 @@ const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
 // Fetches the list of devices from your bridge (SYNC intent)
 export const fetchDevicesFromApi = async (): Promise<Device[]> => {
   try {
-    // Construct the specific URL for the SYNC operation as per user request
-    const syncEndpointUrl = `${SMART_HOME_API_URL}/sync`;
-    const response = await fetch(syncEndpointUrl, {
+    // SYNC request goes to the base SMART_HOME_API_URL
+    const response = await fetch(SMART_HOME_API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -91,7 +97,7 @@ export const fetchDevicesFromApi = async (): Promise<Device[]> => {
 };
 
 // Queries the current states of devices from your bridge (QUERY intent)
-export const queryDeviceStatesFromApi = async (deviceIds: string[]): Promise<Record<string, { state: 'on' | 'off' | 'unknown'; online: boolean }>> => {
+export const queryDeviceStatesFromApi = async (deviceIds: string[]): Promise<Record<string, { state: 'on' | 'off' | 'unknown' | string | number | boolean; online: boolean }>> => {
   if (deviceIds.length === 0) return {};
   try {
     const response = await fetch(SMART_HOME_API_URL, { // Uses the base URL
@@ -119,12 +125,22 @@ export const queryDeviceStatesFromApi = async (deviceIds: string[]): Promise<Rec
       throw new Error('Invalid QUERY response format from API');
     }
 
-    const deviceStates: Record<string, { state: 'on' | 'off' | 'unknown'; online: boolean }> = {};
+    const deviceStates: Record<string, { state: 'on' | 'off' | 'unknown' | string | number | boolean; online: boolean }> = {};
     for (const deviceId in data.payload.devices) {
       const deviceData = data.payload.devices[deviceId];
+      // Adapt based on how your bridge reports state for different devices
+      let stateValue: 'on' | 'off' | 'unknown' | string | number | boolean = 'unknown';
+      if (deviceData.on !== undefined) { // For OnOff trait
+        stateValue = deviceData.on ? 'on' : 'off';
+      } else if (deviceData.status !== undefined) { // General status
+         stateValue = deviceData.status;
+      } else {
+        // Fallback or handle other device types if your bridge returns different state structures
+        // For now, we'll keep it simple and expect 'on' or a generic 'state'
+      }
       deviceStates[deviceId] = {
-        state: deviceData.on ? 'on' : 'off', // Assuming 'on' property directly indicates state
-        online: deviceData.online || false, // Assuming 'online' property indicates status
+        state: stateValue,
+        online: deviceData.online || false, 
       };
     }
     return deviceStates;
@@ -139,7 +155,7 @@ export const executeDeviceCommandOnApi = async (
   deviceId: string,
   command: string, // e.g., "action.devices.commands.OnOff"
   params: Record<string, any> // e.g., { "on": true }
-): Promise<{ success: boolean; newState?: 'on' | 'off' }> => {
+): Promise<{ success: boolean; newState?: 'on' | 'off' | string | number | boolean }> => {
   try {
     const response = await fetch(SMART_HOME_API_URL, { // Uses the base URL
       method: 'POST',
@@ -169,8 +185,16 @@ export const executeDeviceCommandOnApi = async (
 
     if (cmdResponse && cmdResponse.status === 'SUCCESS') {
       // Extract the new state from the response if available
-      const newOnState = cmdResponse.states?.on; // This might be true/false
-      return { success: true, newState: newOnState !== undefined ? (newOnState ? 'on' : 'off') : undefined };
+      let reportedNewState: 'on' | 'off' | string | number | boolean | undefined = undefined;
+      if (cmdResponse.states?.on !== undefined) { // For OnOff trait
+        reportedNewState = cmdResponse.states.on ? 'on' : 'off';
+      } else if (cmdResponse.states?.status !== undefined) { // More generic state if present
+        reportedNewState = cmdResponse.states.status;
+      }
+      // Potentially add more specific state extractions here based on device type/traits
+      // e.g., cmdResponse.states.brightness, cmdResponse.states.thermostatTemperatureSetpoint
+
+      return { success: true, newState: reportedNewState };
     } else {
       console.error('EXECUTE command failed or invalid response:', data);
       // Try to get error code if available
@@ -184,14 +208,14 @@ export const executeDeviceCommandOnApi = async (
   }
 };
 
-// --- Mock functions (can be removed or commented out) ---
-const mockDevices: Device[] = [
-  { id: 'light.living_room', name: 'Living Room Light', type: 'light', state: 'on', online: true, icon: Lightbulb, attributes: { googleDeviceType: 'action.devices.types.LIGHT' } },
-  { id: 'switch.desk_fan', name: 'Desk Fan', type: 'switch', state: 'off', online: true, icon: Power, attributes: { googleDeviceType: 'action.devices.types.SWITCH' }  },
-];
+// --- Mock functions (can be removed or commented out if API integration is complete) ---
+// const mockDevices: Device[] = [
+//   { id: 'light.living_room', name: 'Living Room Light', type: 'light', state: 'on', online: true, icon: Lightbulb, attributes: { googleDeviceType: 'action.devices.types.LIGHT' } },
+//   { id: 'switch.desk_fan', name: 'Desk Fan', type: 'switch', state: 'off', online: true, icon: Power, attributes: { googleDeviceType: 'action.devices.types.SWITCH' }  },
+// ];
 
-export const fetchDevices = async (): Promise<Device[]> => {
-  console.warn("Using mock fetchDevices. Remove for production.");
-  return new Promise((resolve) => setTimeout(() => resolve(mockDevices), 500));
-};
+// export const fetchDevices = async (): Promise<Device[]> => {
+//   console.warn("Using mock fetchDevices. Remove for production.");
+//   return new Promise((resolve) => setTimeout(() => resolve(mockDevices), 500));
+// };
 // --- End of mock functions ---
