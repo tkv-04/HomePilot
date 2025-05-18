@@ -1,11 +1,12 @@
 
 'use server';
 /**
- * @fileOverview This file defines a Genkit flow to interpret voice commands for home automation.
- * It can understand single queries or multiple actions on devices from a single command.
+ * @fileOverview This file defines a Genkit flow to interpret voice commands for home automation
+ * or general conversation. It can understand single queries, multiple actions on devices, or
+ * respond to general chitchat.
  *
  * - interpretVoiceCommand - A function that takes a voice command as input and returns an
- *   actionable command or query for Home Assistant.
+ *   actionable command, query for Home Assistant, or a general conversational response.
  * - InterpretVoiceCommandInput - The input type for the interpretVoiceCommand function.
  * - InterpretVoiceCommandOutput - The return type for the interpretVoiceCommand function.
  */
@@ -26,11 +27,12 @@ const SingleDeviceActionSchema = z.object({
 });
 
 const InterpretVoiceCommandOutputSchema = z.object({
-  intentType: z.enum(['action', 'query']).describe('The type of intent: "action" to perform on device(s), or "query" to get information.'),
+  intentType: z.enum(['action', 'query', 'general']).describe('The type of intent: "action" to perform on device(s), "query" to get information, or "general" for conversational responses.'),
   actions: z.array(SingleDeviceActionSchema).optional().describe('A list of actions to perform on devices. Used when intentType is "action". If multiple devices/actions are mentioned, list them all here.'),
   queryTarget: z.string().optional().describe('The target device or topic for the query (e.g., "kitchen light", "living room temperature sensor"). Used when intentType is "query".'),
   queryType: z.string().optional().describe('The type of information requested (e.g.,"get temperature", "get status", "is on"). Used when intentType is "query". Make this concise.'),
-  suggestedConfirmation: z.string().optional().describe('A polite, natural language phrase confirming the understood command. e.g., "Okay, turning on the kitchen light." or "Let me check that for you."'),
+  suggestedConfirmation: z.string().optional().describe('A polite, natural language phrase confirming the understood command if it is an "action" or "query". e.g., "Okay, turning on the kitchen light." or "Let me check that for you." This field should NOT be populated if intentType is "general".'),
+  generalResponse: z.string().optional().describe('A conversational response if the command is not a home automation action or query (i.e., intentType is "general").'),
 });
 
 export type InterpretVoiceCommandOutput = z.infer<
@@ -47,32 +49,45 @@ const prompt = ai.definePrompt({
   name: 'interpretVoiceCommandPrompt',
   input: {schema: InterpretVoiceCommandInputSchema},
   output: {schema: InterpretVoiceCommandOutputSchema},
-  prompt: `You are a helpful AI assistant that interprets voice commands for home automation.
-Your task is to extract the intent and relevant details from the given voice command.
+  prompt: `You are a helpful AI assistant that interprets voice commands for home automation AND can hold a general conversation.
+Your primary task is to determine if the command is for home automation (ACTION or QUERY) or if it's a GENERAL conversational input.
 
 Given a voice command:
-- First, determine if the user wants to perform an ACTION (e.g., "turn on the light", "turn off the fan and turn on the AC") or make a QUERY (e.g., "what is the temperature?", "is the living room light on?"). Set the 'intentType' field to 'action' or 'query'.
+1.  First, try to determine if the user wants to perform a home automation ACTION (e.g., "turn on the light", "turn off the fan and turn on the AC") or make a home automation QUERY (e.g., "what is the temperature?", "is the living room light on?").
 
-- If 'intentType' is "action":
-  - Extract ALL actions and their target devices mentioned. Populate the 'actions' array.
-  - For each item in 'actions', specify the 'device' (e.g., "kitchen light", "fan") and the 'action' (e.g., "turn on", "turn off"). Make actions concise.
-  - Example: "Jarvis, turn on the kitchen light and turn off the living room fan"
-    -> intentType: "action", actions: [{ device: "kitchen light", action: "turn on" }, { device: "living room fan", action: "turn off" }]
-  - Example: "Jarvis, switch off the main lamp"
-    -> intentType: "action", actions: [{ device: "main lamp", action: "turn off" }]
-  - After determining the actions, if there are any actions to perform, formulate a brief, polite, natural language confirmation phrase to tell the user what you are about to do. For example: "Okay, I'll turn on the kitchen light and turn off the living room fan." or "Sure, turning off the main lamp." Store this in the \`suggestedConfirmation\` field.
+2.  If it's a home automation ACTION:
+    - Set 'intentType' to 'action'.
+    - Extract ALL actions and their target devices mentioned. Populate the 'actions' array.
+    - For each item in 'actions', specify the 'device' (e.g., "kitchen light", "fan") and the 'action' (e.g., "turn on", "turn off"). Make actions concise.
+    - Formulate a brief, polite, natural language confirmation phrase in 'suggestedConfirmation' (e.g., "Okay, I'll turn on the kitchen light.").
+    - Do NOT populate 'generalResponse'.
 
-- If 'intentType' is "query":
-  - Determine what information is being asked for and the target device/topic.
-  - Populate 'queryTarget' (e.g., "living room temperature sensor", "fan") and 'queryType' (e.g., "get temperature", "get status", "is on"). Make queryType concise.
-  - Queries usually target a single piece of information.
-  - Example: "Jarvis, what is the temperature in the living room?"
-    -> intentType: "query", queryTarget: "living room temperature sensor", queryType: "get temperature"
-  - Example: "Jarvis, is the fan on?"
-    -> intentType: "query", queryTarget: "fan", queryType: "get status" (or "is on")
-  - You can optionally provide a short phrase in \`suggestedConfirmation\` like "Let me check that for you." or "Looking up the status of the fan." This will be spoken before fetching the data. Otherwise, it can be omitted for queries.
+3.  If it's a home automation QUERY:
+    - Set 'intentType' to 'query'.
+    - Determine what information is being asked for and the target device/topic.
+    - Populate 'queryTarget' (e.g., "living room temperature sensor", "fan") and 'queryType' (e.g., "get temperature", "get status", "is on"). Make queryType concise.
+    - You can optionally provide a short phrase in 'suggestedConfirmation' like "Let me check that for you." or "Looking up the status of the fan."
+    - Do NOT populate 'generalResponse'.
 
-If the device name in the voice command is generic (e.g., "the sensor", "the light"), try to infer a more specific device name if the context allows, or use the generic name.
+4.  If the command is NOT clearly a home automation action or query (e.g., it's a greeting, a general question, a request for a joke, etc.):
+    - Set 'intentType' to 'general'.
+    - Formulate a helpful, friendly, and conversational response to the user's input. Store this in the 'generalResponse' field.
+    - Do NOT populate 'actions', 'queryTarget', 'queryType', or 'suggestedConfirmation'.
+    - If you cannot fulfill a general request (e.g., "What's the weather?"), you can state your current limitations politely.
+
+Examples:
+  - Voice Command: "Jarvis, turn on the kitchen light and turn off the living room fan"
+    -> intentType: "action", actions: [{ device: "kitchen light", action: "turn on" }, { device: "living room fan", action: "turn off" }], suggestedConfirmation: "Okay, I'll turn on the kitchen light and turn off the living room fan."
+  - Voice Command: "Jarvis, what is the temperature in the living room?"
+    -> intentType: "query", queryTarget: "living room temperature sensor", queryType: "get temperature", suggestedConfirmation: "Let me check the living room temperature."
+  - Voice Command: "Jarvis, hello there"
+    -> intentType: "general", generalResponse: "Hello! How can I assist you with your smart home today?"
+  - Voice Command: "Jarvis, tell me a joke"
+    -> intentType: "general", generalResponse: "Why did the scarecrow win an award? Because he was outstanding in his field!"
+  - Voice Command: "Jarvis, what is the capital of France?"
+    -> intentType: "general", generalResponse: "The capital of France is Paris. Is there anything home-related I can help with?"
+
+If a device name in a home automation command is generic (e.g., "the sensor", "the light"), try to infer a more specific device name if the context allows, or use the generic name.
 The 'device' field in actions or 'queryTarget' in queries should be the name as commonly referred to by the user.
 
 Voice Command: {{{voiceCommand}}}`,
