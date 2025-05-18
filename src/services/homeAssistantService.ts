@@ -1,8 +1,8 @@
 // src/services/homeAssistantService.ts
 import type { Device } from '@/types/home-assistant';
-import { Lightbulb, Power, Wind, Zap, HelpCircle } from 'lucide-react'; // Replaced Question with HelpCircle
+import { Lightbulb, Power, Wind, Zap, HelpCircle } from 'lucide-react';
 
-const SMART_HOME_API_URL = 'https://smarthome.tkv.in.net/smarthome'; // Ensure this is HTTPS if your server supports it. If not, use HTTP.
+const SMART_HOME_API_URL = 'https://smarthome.tkv.in.net/smarthome/'; // Ensure this is HTTPS if your server supports it. If not, use HTTP.
 
 // Helper to generate a unique request ID (simple version)
 const generateRequestId = (): string => {
