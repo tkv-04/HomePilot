@@ -1,60 +1,51 @@
-
 // src/components/dashboard/DeviceCard.tsx
 "use client";
 
 import type { Device } from '@/types/home-assistant';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Lightbulb, Thermometer, Droplets, Power, Tv, Wind, Zap } from 'lucide-react';
+import { Lightbulb, Power, Wind, Zap, Thermometer, Droplets, Tv, Question, WifiOff } from 'lucide-react'; // Added Question, WifiOff
 import { Switch as UISwitch } from '@/components/ui/switch';
-import { Progress } from '@/components/ui/progress';
+// Progress component is removed as brightness attribute is not reliably available for now
+// import { Progress } from '@/components/ui/progress';
 
 interface DeviceCardProps {
   device: Device;
-  onToggleState?: (deviceId: string, currentState: 'on' | 'off') => void;
+  onToggleState?: (deviceId: string, currentState: Device['state']) => void;
 }
 
-const getDeviceIcon = (device: Device): React.ElementType => {
-  if (device.icon) return device.icon;
-
-  switch (device.type) {
-    case 'light':
-      return Lightbulb;
-    case 'sensor':
-      switch (device.attributes?.device_class) {
-        case 'temperature':
-          return Thermometer;
-        case 'humidity':
-          return Droplets;
-        case 'power':
-          return Power;
-        default:
-          return Zap; 
-      }
-    case 'switch':
-      return Power;
-    case 'media_player':
-      return Tv;
-    case 'climate':
-      return Wind;
-    default:
-      return Zap; 
-  }
+// getDeviceIcon now uses the icon pre-assigned by the service, or falls back
+const getDeviceIconElement = (device: Device): React.ReactElement => {
+  const IconComponent = device.icon || Zap; // Fallback to Zap if no icon provided
+  return <IconComponent className="h-6 w-6 text-muted-foreground" />;
 };
 
 export function DeviceCard({ device, onToggleState }: DeviceCardProps) {
-  const IconComponent = getDeviceIcon(device);
+  const IconElement = getDeviceIconElement(device);
 
   const handleToggle = () => {
-    if (onToggleState && (device.type === 'light' || device.type === 'switch')) {
-      onToggleState(device.id, device.state as 'on' | 'off');
+    if (onToggleState && (device.type === 'light' || device.type === 'switch' || device.type === 'fan' || device.type === 'outlet')) {
+      if (device.state === 'on' || device.state === 'off') { // Ensure state is toggleable
+         onToggleState(device.id, device.state);
+      }
     }
   };
 
   const renderStateInfo = () => {
+    if (!device.online) {
+      return (
+        <div className="flex items-center space-x-2 text-muted-foreground">
+          <WifiOff className="h-5 w-5 text-destructive" />
+          <span>Offline</span>
+        </div>
+      );
+    }
+
     switch (device.type) {
       case 'light':
       case 'switch':
+      case 'fan':
+      case 'outlet':
         const isChecked = device.state === 'on';
         return (
           <div className="flex items-center space-x-2">
@@ -63,11 +54,12 @@ export function DeviceCard({ device, onToggleState }: DeviceCardProps) {
               onCheckedChange={handleToggle}
               aria-label={`Toggle ${device.name}`}
               className={onToggleState ? "cursor-pointer" : "cursor-default"}
-              disabled={!onToggleState}
+              disabled={!onToggleState || !device.online}
             />
-            <span className={`capitalize text-sm ${isChecked ? 'text-accent' : 'text-muted-foreground'}`}>
-              {device.state}
+            <span className={`capitalize text-sm ${isChecked && device.online ? 'text-accent' : 'text-muted-foreground'}`}>
+              {device.online ? device.state : 'Offline'}
             </span>
+            {/* Brightness progress bar removed for now
             {device.type === 'light' && device.attributes?.brightness !== undefined && device.state === 'on' && (
                 <div className="w-full ml-auto">
                     <div className="flex justify-between text-xs text-muted-foreground mb-1">
@@ -77,53 +69,44 @@ export function DeviceCard({ device, onToggleState }: DeviceCardProps) {
                     <Progress value={(device.attributes.brightness / 255) * 100} className="h-2" />
                 </div>
             )}
+            */}
           </div>
         );
+      // Sensor, media_player, climate types are simplified or shown as 'unknown' for now
+      // as the provided bridge primarily handles OnOff.
+      // These can be expanded if the bridge provides more detailed SYNC/QUERY data.
       case 'sensor':
-        return (
-          <p className="text-2xl font-semibold text-accent">
-            {device.state}
+         return (
+          <p className="text-lg text-accent">
+            {String(device.state)}
             {device.attributes?.unit_of_measurement && (
               <span className="text-sm text-muted-foreground ml-1">{device.attributes.unit_of_measurement}</span>
             )}
           </p>
         );
-      case 'media_player':
-        return (
-          <div className="text-sm space-y-1">
-            <p><strong className="text-foreground">State:</strong> <span className="text-accent capitalize">{String(device.state)}</span></p>
-            {device.attributes?.media_title && <p><strong className="text-foreground">Playing:</strong> <span className="text-muted-foreground">{device.attributes.media_title}</span></p>}
-            {device.attributes?.media_artist && <p><strong className="text-foreground">Artist:</strong> <span className="text-muted-foreground">{device.attributes.media_artist}</span></p>}
-          </div>
-        );
-      case 'climate':
-         return (
-          <div className="text-sm space-y-1">
-            <p><strong className="text-foreground">Mode:</strong> <span className="text-accent capitalize">{String(device.state)}</span></p>
-            {device.attributes?.current_temperature !== undefined && <p><strong className="text-foreground">Current:</strong> <span className="text-muted-foreground">{device.attributes.current_temperature}°C</span></p>}
-            {device.attributes?.target_temperature !== undefined && <p><strong className="text-foreground">Target:</strong> <span className="text-muted-foreground">{device.attributes.target_temperature}°C</span></p>}
-            {device.attributes?.hvac_action && <p><strong className="text-foreground">Action:</strong> <span className="text-accent capitalize">{device.attributes.hvac_action}</span></p>}
-          </div>
-        );
       default:
-        return <p className="text-lg text-accent capitalize">{String(device.state)}</p>;
+        return <p className="text-lg text-muted-foreground capitalize">{device.online ? String(device.state) : 'Offline'}</p>;
     }
   };
 
   return (
-    <Card className="shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col h-full">
+    <Card className={`shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col h-full ${!device.online ? 'opacity-60' : ''}`}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-lg font-medium">{device.name}</CardTitle>
-        <IconComponent className="h-6 w-6 text-muted-foreground" />
+        {IconElement}
       </CardHeader>
       <CardContent className="flex-grow flex flex-col justify-between space-y-4">
         <div className="flex-grow">
          {renderStateInfo()}
         </div>
         <div className="pt-2">
-          <Badge variant="outline" className="text-xs capitalize">{device.type.replace('_', ' ')}</Badge>
-          {device.attributes?.device_class && (
-            <Badge variant="secondary" className="text-xs ml-2 capitalize">{device.attributes.device_class}</Badge>
+          <Badge variant={device.online ? "outline" : "destructive"} className="text-xs capitalize">
+            {device.type.replace('_', ' ')}
+          </Badge>
+          {device.attributes?.googleDeviceType && (
+            <Badge variant="secondary" className="text-xs ml-2 truncate max-w-[150px]">
+              {device.attributes.googleDeviceType.split('.').pop()?.toLowerCase()}
+            </Badge>
           )}
         </div>
       </CardContent>
