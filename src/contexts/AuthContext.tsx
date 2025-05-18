@@ -11,7 +11,7 @@ interface User {
 
 interface AuthContextType {
   user: User | null;
-  login: (email: string) => void; // Simplified login, added missing comma and return type
+  login: (email: string) => void;
   logout: () => void;
   isLoading: boolean;
 }
@@ -23,7 +23,7 @@ const AUTH_STORAGE_KEY = 'homepilot_user';
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const router = useRouter();
+  const router = useRouter(); // Still needed for logout
 
   useEffect(() => {
     try {
@@ -39,15 +39,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const login = (email: string) => {
-    // Mock login
+    // Mock login - only updates state and localStorage
     const mockUser: User = { email };
     localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(mockUser));
     setUser(mockUser);
-    router.push('/dashboard');
+    // router.push('/dashboard'); // Removed from here
   };
 
   const logout = () => {
     localStorage.removeItem(AUTH_STORAGE_KEY);
+    // Also clear the auth cookie on logout
+    document.cookie = "homepilot_user_token=; path=/; max-age=0; SameSite=Lax";
     setUser(null);
     router.push('/login');
   };

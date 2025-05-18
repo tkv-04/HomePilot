@@ -13,6 +13,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Eye, EyeOff, LogIn } from 'lucide-react';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
+import { useRouter } from 'next/navigation'; // Import useRouter
 
 const loginSchema = z.object({
   email: z.string().email({ message: "Invalid email address." }),
@@ -23,6 +24,7 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 
 export function LoginForm() {
   const { login } = useAuth();
+  const router = useRouter(); // Initialize router
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
@@ -41,13 +43,13 @@ export function LoginForm() {
       // Simulate API call
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      // To make middleware work with this mock, we set a dummy cookie here.
+      // Set the authentication cookie
       document.cookie = "homepilot_user_token=mock_token; path=/; max-age=3600; SameSite=Lax"; // Expires in 1 hour
       
-      login(data.email); // This initiates the login process (sets localStorage, context state, and calls router.push)
-      // The AuthContext's login function will handle the redirect.
-      // If the redirect is fast, this component will unmount.
-      // If not, setIsLoading(false) in the finally block will clear the spinner.
+      login(data.email); // Update auth context state and localStorage
+      
+      // Navigate to dashboard
+      router.push('/dashboard');
 
     } catch (error) {
       console.error("Login attempt failed:", error);
@@ -56,13 +58,13 @@ export function LoginForm() {
         description: "An unexpected error occurred. Please try again.",
         variant: "destructive",
       });
-      // If an error occurs before login() is called or if login() itself could throw (it's sync here),
-      // then `setIsLoading(false)` is crucial here too. The finally block covers it.
     } finally {
       // This ensures that isLoading is set to false after the login attempt,
-      // regardless of whether the try block succeeded or an error occurred (that wasn't caught and rethrown).
+      // regardless of whether the try block succeeded or an error occurred.
       // If the component unmounts due to navigation before this line, React handles it gracefully.
-      setIsLoading(false);
+      if (typeof window !== 'undefined') { // Check if still in browser context
+         setIsLoading(false);
+      }
     }
   };
 
@@ -109,9 +111,9 @@ export function LoginForm() {
                 className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 onClick={() => setShowPassword(!showPassword)}
                 disabled={isLoading}
+                aria-label={showPassword ? "Hide password" : "Show password"}
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                <span className="sr-only">{showPassword ? "Hide password" : "Show password"}</span>
               </Button>
             </div>
             {form.formState.errors.password && (
