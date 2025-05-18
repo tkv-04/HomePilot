@@ -29,7 +29,7 @@ const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
       break;
     case 'action.devices.types.OUTLET':
       appType = 'outlet';
-      icon = Power;
+      icon = Power; // Often represented same as switch
       break;
     case 'action.devices.types.FAN':
       appType = 'fan';
@@ -37,11 +37,11 @@ const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
       break;
     case 'action.devices.types.SENSOR':
       appType = 'sensor';
-      icon = HelpCircle; // Default for sensors
+      icon = HelpCircle; // Default for generic sensors
       let unit = '';
+      // Check for sensorStatesSupported from SYNC response as primary source for sensor details
       if (googleDevice.attributes && googleDevice.attributes.sensorStatesSupported && googleDevice.attributes.sensorStatesSupported.length > 0) {
-        // Using the first supported state to determine icon/unit for simplicity
-        const sensorStateInfo = googleDevice.attributes.sensorStatesSupported[0];
+        const sensorStateInfo = googleDevice.attributes.sensorStatesSupported[0]; // Using the first supported state
         if (sensorStateInfo.name === 'temperature') {
           icon = Thermometer;
           unit = sensorStateInfo.unit || '°'; 
@@ -49,14 +49,13 @@ const mapGoogleTypeToAppDevice = (googleDevice: any): Partial<Device> => {
           icon = Droplets;
           unit = sensorStateInfo.unit || '%';
         }
-        // for binary sensors or other sensors, it will keep HelpCircle and no unit
+        // Add more specific sensor type checks here if needed
       }
       deviceSpecificAttributes.unit_of_measurement = unit;
-      // deviceSpecificAttributes.sensorStatesSupported = googleDevice.attributes?.sensorStatesSupported; // Optionally store all supported states
       break;
     default:
       appType = 'unknown';
-      icon = Zap; 
+      icon = Zap; // Fallback for other/unknown device types
   }
   return {
     type: appType,
@@ -95,10 +94,10 @@ export const fetchDevicesFromApi = async (): Promise<Device[]> => {
         id: d.id, 
         name: d.name?.name || d.id,
         type: mappedTypeAndAttributes.type || 'unknown',
-        state: 'unknown', 
-        online: false, 
+        state: 'unknown', // Initial state, will be updated by QUERY
+        online: false, // Initial state, will be updated by QUERY
         icon: mappedTypeAndAttributes.icon,
-        attributes: { ...mappedTypeAndAttributes.attributes },
+        attributes: { ...(d.attributes || {}), ...mappedTypeAndAttributes.attributes }, // Merge attributes
       };
     });
   } catch (error) {
@@ -139,14 +138,23 @@ export const queryDeviceStatesFromApi = async (deviceIds: string[]): Promise<Rec
     const deviceStates: Record<string, { state: 'on' | 'off' | 'unknown' | string | number | boolean; online: boolean }> = {};
     for (const deviceId in data.payload.devices) {
       const deviceData = data.payload.devices[deviceId];
+      // Log the raw data received for this deviceId from the QUERY
+      console.log(`Query data for ${deviceId}:`, JSON.stringify(deviceData));
+
       let stateValue: 'on' | 'off' | 'unknown' | string | number | boolean = 'unknown';
       
-      // Based on your bridge, it returns an 'on' property for state.
-      if (deviceData.on !== undefined) { 
+      if (deviceData.on !== undefined) { // Check for 'on' property (for lights, switches, etc.)
         stateValue = deviceData.on ? 'on' : 'off';
       } else {
-        // If your bridge were to return other state properties for sensors, handle them here.
-        // For now, it seems to only provide 'on', so other sensors might appear 'off' or 'unknown'.
+        // If 'on' is not present, it might be a sensor.
+        // Iterate over keys to find the state value, excluding 'online'.
+        const potentialStateKeys = Object.keys(deviceData).filter(k => k !== 'online');
+        if (potentialStateKeys.length > 0) {
+          // Use the value of the first such key as the state.
+          // This assumes the bridge sends sensor values under a specific key (e.g., "temperature", "humidity", "value").
+          stateValue = deviceData[potentialStateKeys[0]];
+        }
+        // If no other key found, stateValue remains 'unknown'.
       }
       deviceStates[deviceId] = {
         state: stateValue,
@@ -195,9 +203,11 @@ export const executeDeviceCommandOnApi = async (
 
     if (cmdResponse && cmdResponse.status === 'SUCCESS') {
       let reportedNewState: 'on' | 'off' | string | number | boolean | undefined = undefined;
+      // If the EXECUTE response includes the new state (e.g., for OnOff)
       if (cmdResponse.states?.on !== undefined) { 
         reportedNewState = cmdResponse.states.on ? 'on' : 'off';
       }
+      // Potentially handle other state updates from EXECUTE if your bridge returns them
       return { success: true, newState: reportedNewState };
     } else {
       console.error('EXECUTE command failed or invalid response:', data);
@@ -209,3 +219,4 @@ export const executeDeviceCommandOnApi = async (
     throw error;
   }
 };
+    

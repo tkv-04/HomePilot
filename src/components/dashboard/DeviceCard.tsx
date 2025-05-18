@@ -1,20 +1,18 @@
+
 // src/components/dashboard/DeviceCard.tsx
 "use client";
 
 import type { Device } from '@/types/home-assistant';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Lightbulb, Power, Wind, Zap, Thermometer, Droplets, Tv, HelpCircle, WifiOff } from 'lucide-react'; // Replaced Question with HelpCircle
+import { HelpCircle, WifiOff } from 'lucide-react';
 import { Switch as UISwitch } from '@/components/ui/switch';
-// Progress component is removed as brightness attribute is not reliably available for now
-// import { Progress } from '@/components/ui/progress';
 
 interface DeviceCardProps {
   device: Device;
   onToggleState?: (deviceId: string, currentState: Device['state']) => void;
 }
 
-// getDeviceIcon now uses the icon pre-assigned by the service, or falls back
 const getDeviceIconElement = (device: Device): React.ReactElement => {
   const IconComponent = device.icon || HelpCircle; // Fallback to HelpCircle if no icon provided
   return <IconComponent className="h-6 w-6 text-muted-foreground" />;
@@ -25,7 +23,7 @@ export function DeviceCard({ device, onToggleState }: DeviceCardProps) {
 
   const handleToggle = () => {
     if (onToggleState && (device.type === 'light' || device.type === 'switch' || device.type === 'fan' || device.type === 'outlet')) {
-      if (device.state === 'on' || device.state === 'off') { // Ensure state is toggleable
+      if (device.state === 'on' || device.state === 'off') { 
          onToggleState(device.id, device.state);
       }
     }
@@ -62,10 +60,14 @@ export function DeviceCard({ device, onToggleState }: DeviceCardProps) {
           </div>
         );
       case 'sensor':
+         // Display 'N/A' if state is 'unknown' or undefined, otherwise display the state.
+         const displayState = (device.state === 'unknown' || device.state === undefined || device.state === null) 
+                              ? 'N/A' 
+                              : String(device.state);
          return (
           <p className="text-lg text-accent">
-            {String(device.state)}
-            {device.attributes?.unit_of_measurement && (
+            {displayState}
+            {device.attributes?.unit_of_measurement && displayState !== 'N/A' && (
               <span className="text-sm text-muted-foreground ml-1">{device.attributes.unit_of_measurement}</span>
             )}
           </p>
@@ -90,8 +92,8 @@ export function DeviceCard({ device, onToggleState }: DeviceCardProps) {
             {device.type.replace('_', ' ')}
           </Badge>
           {device.attributes?.googleDeviceType && (
-            <Badge variant="secondary" className="text-xs ml-2 truncate max-w-[150px]" title={device.attributes.googleDeviceType.split('.').pop()?.toLowerCase()}>
-              {device.attributes.googleDeviceType.split('.').pop()?.toLowerCase()}
+            <Badge variant="secondary" className="text-xs ml-2 truncate max-w-[150px]" title={String(device.attributes.googleDeviceType).split('.').pop()?.toLowerCase()}>
+              {String(device.attributes.googleDeviceType).split('.').pop()?.toLowerCase()}
             </Badge>
           )}
         </div>
@@ -99,3 +101,4 @@ export function DeviceCard({ device, onToggleState }: DeviceCardProps) {
     </Card>
   );
 }
+    
