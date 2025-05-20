@@ -5,9 +5,10 @@
 import type { ReactNode } from 'react';
 import React, { createContext, useState, useEffect, useContext, useCallback } from 'react';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot, updateDoc } from 'firebase/firestore'; // Removed 'collection' as it's not used for ID gen now
 import type { UserPreferences, Room, DeviceGroup } from '@/types/preferences';
 import { useAuth } from '@/hooks/useAuth';
+import { v4 as uuidv4 } from 'uuid'; // Import uuid
 
 interface UserPreferencesContextType {
   preferences: UserPreferences | null;
@@ -98,10 +99,10 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
     }
     const prefDocRef = doc(db, 'userPreferences', userId);
     try {
-      await updateDoc(prefDocRef, newPrefs); // Use updateDoc for partial updates
+      // Using setDoc with merge: true is safer as it creates the doc if it doesn't exist,
+      // or merges if it does. updateDoc throws an error if the document doesn't exist.
+      await setDoc(prefDocRef, newPrefs, { merge: true });
     } catch (err: any) {
-      // If document doesn't exist, setDoc might be more appropriate or handle error.
-      // For now, assume document exists if we're updating.
       console.error("Error updating user preferences in Firestore:", err);
       setError(err);
       throw err;
@@ -119,7 +120,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
   // Room Management
   const addRoom = useCallback(async (roomData: Omit<Room, 'id'>) => {
     if (!userId) throw new Error("User not authenticated.");
-    const newId = doc(collection(db, 'userPreferences', userId, '_placeholder')).id; // Firestore generates IDs this way
+    const newId = uuidv4(); // Use uuid for ID generation
     const newRoom: Room = { ...roomData, id: newId };
     const newRooms = [...rooms, newRoom];
     await updatePreferencesInFirestore({ rooms: newRooms });
@@ -140,7 +141,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
   // Device Group Management
   const addDeviceGroup = useCallback(async (groupData: Omit<DeviceGroup, 'id'>) => {
     if (!userId) throw new Error("User not authenticated.");
-    const newId = doc(collection(db, 'userPreferences', userId, '_placeholder')).id;
+    const newId = uuidv4(); // Use uuid for ID generation
     const newGroup: DeviceGroup = { ...groupData, id: newId };
     const newGroups = [...deviceGroups, newGroup];
     await updatePreferencesInFirestore({ deviceGroups: newGroups });
@@ -158,8 +159,6 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
     await updatePreferencesInFirestore({ deviceGroups: newGroups });
   }, [userId, deviceGroups, updatePreferencesInFirestore]);
 
-  // Helper to generate IDs on the client, as Firestore ID generation for subcollections is complex.
-  const { collection } = require("firebase/firestore"); // ensure collection is imported
 
   return (
     <UserPreferencesContext.Provider value={{
