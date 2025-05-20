@@ -3,7 +3,7 @@
 "use client";
 
 import { useState, useEffect, FormEvent, useRef, useCallback } from 'react';
-import type { InterpretVoiceCommandOutput } from '@/ai/flows/interpret-voice-command';
+import type { InterpretVoiceCommandOutput, SingleDeviceAction } from '@/ai/flows/interpret-voice-command';
 import { interpretVoiceCommand } from '@/ai/flows/interpret-voice-command';
 import { executeDeviceCommandsOnApi, type DeviceCommand } from '@/services/homeAssistantService';
 import type { Device } from '@/types/home-assistant';
@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Mic, MicOff, Loader2, CheckCircle2, XCircle, Lightbulb, Thermometer, Tv2, Lock, Send, Info, Droplets, HelpCircle, Wind, Power, Volume2, MessageSquare } from 'lucide-react';
+import { Mic, MicOff, Loader2, CheckCircle2, XCircle, Lightbulb, Thermometer, Tv2, Lock, Send, Info, Droplets, HelpCircle, Wind, Power, Volume2, MessageSquare, TimerIcon } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 
@@ -65,19 +65,30 @@ const deviceTypeKeywords: Record<string, Device['type']> = {
   outlet: 'outlet',
 };
 
+// Store active timers
+const activeTimers = new Map<string, NodeJS.Timeout>();
+
+function formatSeconds(seconds: number): string {
+  if (seconds < 60) return `${seconds} second${seconds === 1 ? '' : 's'}`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (remainingSeconds === 0) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  return `${minutes} minute${minutes === 1 ? '' : 's'} and ${remainingSeconds} second${remainingSeconds === 1 ? '' : 's'}`;
+}
+
 
 export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceControlProps) {
   const [commandText, setCommandText] = useState("");
-  const [isProcessingCommand, setIsProcessingCommand] = useState(false); // True when Genkit/API call is active
+  const [isProcessingCommand, setIsProcessingCommand] = useState(false); 
   const [processedCommandDetails, setProcessedCommandDetails] = useState<any>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
-  const [feedbackType, setFeedbackType] = useState<'success' | 'error' | 'info' | 'speaking' | 'general' | null>(null);
+  const [feedbackType, setFeedbackType] = useState<'success' | 'error' | 'info' | 'speaking' | 'general' | 'timer' | null>(null);
 
   const [speechRecognitionApiAvailable, setSpeechRecognitionApiAvailable] = useState(false);
   const [speechSynthesisApiAvailable, setSpeechSynthesisApiAvailable] = useState(false);
   
-  const [userDesiredListening, setUserDesiredListening] = useState(true); // User's intent to listen
-  const [micActuallyActive, setMicActuallyActive] = useState(false); // Actual state of the browser's mic
+  const [userDesiredListening, setUserDesiredListening] = useState(true); 
+  const [micActuallyActive, setMicActuallyActive] = useState(false); 
   const [micPermissionError, setMicPermissionError] = useState<string | null>(null);
   const [isWaitingForCommandAfterWakeWord, setIsWaitingForCommandAfterWakeWord] = useState(false);
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
@@ -94,7 +105,6 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
   const waitForCommandTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
-  // Ref for isWaitingForCommandAfterWakeWord, useful for the timeout callback
   const isWaitingForCommandAfterWakeWordRef = useRef(isWaitingForCommandAfterWakeWord);
   useEffect(() => { 
     isWaitingForCommandAfterWakeWordRef.current = isWaitingForCommandAfterWakeWord; 
@@ -121,6 +131,9 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
         window.speechSynthesis.onvoiceschanged = null;
         window.speechSynthesis.cancel();
       }
+      // Clear all active timers when component unmounts
+      activeTimers.forEach(timeoutId => clearTimeout(timeoutId));
+      activeTimers.clear();
     };
   }, [populateVoices]);
 
@@ -142,7 +155,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       }
       utterance.onerror = (event) => {
         console.error("SpeechSynthesis Error:", event.error);
-        setFeedbackMessage(`Error speaking: ${event.error}`); setFeedbackType('error');
+        // Don't speak errors
         onEndCallback?.();
       };
       utterance.onend = () => { onEndCallback?.(); };
@@ -176,10 +189,10 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
         setFeedbackMessage(`"${WAKE_WORD}" detected. Waiting for your command...`); 
         setFeedbackType('info'); setCommandText(""); 
         setIsWaitingForCommandAfterWakeWord(true); 
-        setIsProcessingCommand(false); // Not processing a full command yet
+        setIsProcessingCommand(false); 
         if (waitForCommandTimeoutRef.current) clearTimeout(waitForCommandTimeoutRef.current);
         waitForCommandTimeoutRef.current = setTimeout(() => {
-          if (isWaitingForCommandAfterWakeWordRef.current) { // Use ref for timeout check
+          if (isWaitingForCommandAfterWakeWordRef.current) { 
             setFeedbackMessage(null); 
             setIsWaitingForCommandAfterWakeWord(false); setCommandText("");
           }
@@ -198,7 +211,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       setFeedbackMessage(null); setCommandText(""); setIsProcessingCommand(false); return;
     }
 
-    setIsProcessingCommand(true); // Genkit/API call starting
+    setIsProcessingCommand(true); 
     setProcessedCommandDetails(null);
     setFeedbackMessage(`Interpreting: "${commandToInterpret}"`); setFeedbackType('info');
 
@@ -213,7 +226,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       setIsProcessingCommand(false); return;
     }
     
-    const executeAfterConfirmation = async () => {
+    const executeAfterOptionalConfirmation = async () => {
       if (genkitResponse.intentType === 'general') {
         if (genkitResponse.generalResponse) {
             setFeedbackMessage(genkitResponse.generalResponse); setFeedbackType('speaking');
@@ -288,6 +301,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
         
         let actionSummaryForDisplay = "";
         const commandsToExecute: DeviceCommand[] = [];
+        const timedActions: Array<{ actionDetail: SingleDeviceAction, devicesForThisAction: Device[], targetOnState: boolean, actionSummary: string }> = [];
 
         for (const actionDetail of genkitResponse.actions) {
             const actionTargetLower = actionDetail.device.toLowerCase();
@@ -306,17 +320,17 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
             let groupOrRoomProcessed = false;
             let matchedCustomName = "";
 
-            if (userPreferences?.rooms) {
-                const matchedRoom = userPreferences.rooms.find(room => room.name.toLowerCase() === actionTargetLower);
-                if (matchedRoom) {
-                    devicesForThisAction = selectedDevices.filter(d => matchedRoom.deviceIds.includes(d.id) && d.online);
-                    matchedCustomName = `room "${matchedRoom.name}"`;
-                    groupOrRoomProcessed = true;
-                }
+            // Check custom rooms first
+            const matchedRoom = rooms?.find(room => room.name.toLowerCase() === actionTargetLower);
+            if (matchedRoom) {
+                devicesForThisAction = selectedDevices.filter(d => matchedRoom.deviceIds.includes(d.id) && d.online);
+                matchedCustomName = `room "${matchedRoom.name}"`;
+                groupOrRoomProcessed = true;
             }
 
-            if (!groupOrRoomProcessed && userPreferences?.deviceGroups) {
-                const matchedGroup = userPreferences.deviceGroups.find(group => group.name.toLowerCase() === actionTargetLower);
+            // Then check custom device groups
+            if (!groupOrRoomProcessed) {
+                const matchedGroup = deviceGroups?.find(group => group.name.toLowerCase() === actionTargetLower);
                 if (matchedGroup) {
                     devicesForThisAction = selectedDevices.filter(d => matchedGroup.deviceIds.includes(d.id) && d.online);
                     matchedCustomName = `group "${matchedGroup.name}"`;
@@ -324,17 +338,18 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
                 }
             }
             
+            let currentActionSummarySegment = "";
             if (groupOrRoomProcessed) {
-                 actionSummaryForDisplay += `${targetOnState ? 'Turning on' : 'Turning off'} devices in ${matchedCustomName}. `;
+                 currentActionSummarySegment = `${targetOnState ? 'Turning on' : 'Turning off'} devices in ${matchedCustomName}. `;
             } else { 
                 if (actionTargetLower.startsWith("all ")) { 
                     const typeKeyword = actionTargetLower.substring(4).trim(); 
                     const appDeviceType = deviceTypeKeywords[typeKeyword];
                     if (appDeviceType) {
                         devicesForThisAction = selectedDevices.filter(d => d.type === appDeviceType && d.online);
-                        actionSummaryForDisplay += `${targetOnState ? 'Turning on' : 'Turning off'} all ${typeKeyword}. `;
+                        currentActionSummarySegment = `${targetOnState ? 'Turning on' : 'Turning off'} all ${typeKeyword}. `;
                     } else {
-                        actionSummaryForDisplay += `Unknown general group "${actionDetail.device}". `;
+                        currentActionSummarySegment = `Unknown general group "${actionDetail.device}". `;
                     }
                 } else {
                     let parsedRoom = "";
@@ -352,7 +367,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
                         devicesForThisAction = selectedDevices.filter(d => 
                             d.name.toLowerCase().includes(parsedRoom) && d.type === appDeviceType && d.online
                         );
-                        actionSummaryForDisplay += `${targetOnState ? 'Turning on' : 'Turning off'} ${parsedRoom} ${parsedTypeKeyword}. `;
+                        currentActionSummarySegment = `${targetOnState ? 'Turning on' : 'Turning off'} ${parsedRoom} ${parsedTypeKeyword}. `;
                     } else { 
                         const targetDevice = selectedDevices.find(
                             d => (d.name.toLowerCase().includes(actionTargetLower) ||
@@ -361,96 +376,167 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
                         );
                         if (targetDevice) {
                             devicesForThisAction.push(targetDevice);
-                            actionSummaryForDisplay += `${targetOnState ? 'Turning on' : 'Turning off'} ${targetDevice.name}. `;
+                            currentActionSummarySegment = `${targetOnState ? 'Turning on' : 'Turning off'} ${targetDevice.name}. `;
                         } else {
-                            actionSummaryForDisplay += `Device "${actionDetail.device}" not found or is offline. `;
+                            currentActionSummarySegment = `Device "${actionDetail.device}" not found or is offline. `;
                         }
                     }
                 }
             }
+            actionSummaryForDisplay += currentActionSummarySegment;
 
-            devicesForThisAction.forEach(device => {
-                if (!['light', 'switch', 'fan', 'outlet'].includes(device.type)) { 
-                    actionSummaryForDisplay += `Cannot control ${device.name} (${device.type}). `; return;
-                }
-                commandsToExecute.push({
-                    deviceId: device.id,
-                    command: 'action.devices.commands.OnOff',
-                    params: { on: targetOnState as boolean }
+            if (actionDetail.delayInSeconds && actionDetail.delayInSeconds > 0) {
+                timedActions.push({ actionDetail, devicesForThisAction, targetOnState, actionSummary: currentActionSummarySegment });
+            } else {
+                devicesForThisAction.forEach(device => {
+                    if (!['light', 'switch', 'fan', 'outlet'].includes(device.type)) { 
+                        actionSummaryForDisplay += `Cannot control ${device.name} (${device.type}). `; return;
+                    }
+                    commandsToExecute.push({
+                        deviceId: device.id,
+                        command: 'action.devices.commands.OnOff',
+                        params: { on: targetOnState as boolean }
+                    });
                 });
-            });
+            }
         }
 
         setProcessedCommandDetails({ intentType: 'action', actions: genkitResponse.actions, summary: actionSummaryForDisplay.trim() });
 
-        if (commandsToExecute.length === 0) {
+        // Handle immediate commands
+        if (commandsToExecute.length > 0) {
+            setFeedbackMessage(`Sending ${commandsToExecute.length} command(s): ${actionSummaryForDisplay.trim()}`); 
+            setFeedbackType('info');
+            try {
+                const execResults = await executeDeviceCommandsOnApi(commandsToExecute);
+                let successCount = 0; let failCount = 0; let resultSummary = ""; const deviceIdsToRefresh: string[] = [];
+                execResults.commands.forEach(result => {
+                  const deviceId = result.ids[0]; const device = selectedDevices.find(d => d.id === deviceId);
+                  const deviceName = device ? device.name : deviceId;
+                  if (result.status === 'SUCCESS') { successCount++; resultSummary += `${deviceName} OK. `; deviceIdsToRefresh.push(deviceId); }
+                  else { failCount++; resultSummary += `${deviceName} FAILED (${result.errorCode || 'unknown'}). `; }
+                });
+                if (successCount > 0 && failCount === 0) toast({ title: "Commands Successful", description: `${successCount} action(s) sent.`});
+                else if (successCount > 0 && failCount > 0) toast({ title: "Some Commands Sent", description: `${successCount} OK, ${failCount} failed.`});
+                else toast({ title: "Commands Failed", description: `All ${failCount} action(s) failed.`, variant: "destructive"});
+                
+                const finalFeedbackMsg = resultSummary.trim() || (successCount > 0 ? "Immediate actions completed." : "Immediate actions failed.");
+                setFeedbackMessage(finalFeedbackMsg); 
+                const finalFeedbackType = failCount === 0 ? 'success' : (successCount > 0 ? 'info' : 'error');
+                setFeedbackType(finalFeedbackType);
+                
+                if (deviceIdsToRefresh.length > 0 && onRefreshDeviceStates) {
+                    setFeedbackMessage(`Refreshing states for ${deviceIdsToRefresh.length} device(s)...`); setFeedbackType('info');
+                    await onRefreshDeviceStates(deviceIdsToRefresh);
+                    setFeedbackMessage(finalFeedbackMsg); setFeedbackType(finalFeedbackType); 
+                }
+            } catch (execError: any) {
+                const msg = `API Error executing immediate commands: ${execError.message}`;
+                setFeedbackMessage(msg); setFeedbackType('error'); toast({ title: "API Error", description: msg, variant: "destructive" });
+            }
+        }
+
+        // Handle timed actions
+        let timerFeedbackCombined = "";
+        timedActions.forEach(({ actionDetail, devicesForThisAction, targetOnState, actionSummary }) => {
+            const timerId = `timer-${actionDetail.device}-${Date.now()}`;
+            const delay = actionDetail.delayInSeconds!;
+            const formattedDelay = formatSeconds(delay);
+
+            timerFeedbackCombined += `${actionSummary} Timer set for ${formattedDelay}. `;
+            setFeedbackType('timer'); // Keep overall feedback type as timer if any timers are set
+
+            const timeoutId = setTimeout(async () => {
+                toast({
+                    title: "Timer Finished",
+                    description: `Executing: ${actionSummary}`,
+                });
+                const timedCommands: DeviceCommand[] = [];
+                devicesForThisAction.forEach(device => {
+                     if (['light', 'switch', 'fan', 'outlet'].includes(device.type)) {
+                        timedCommands.push({
+                            deviceId: device.id,
+                            command: 'action.devices.commands.OnOff',
+                            params: { on: targetOnState }
+                        });
+                    }
+                });
+
+                if (timedCommands.length > 0) {
+                    try {
+                        const execResults = await executeDeviceCommandsOnApi(timedCommands);
+                        let successCount = 0; let failCount = 0; let resultSummary = ""; const deviceIdsToRefresh: string[] = [];
+                        execResults.commands.forEach(result => {
+                            const deviceId = result.ids[0]; const device = selectedDevices.find(d => d.id === deviceId);
+                            const deviceName = device ? device.name : deviceId;
+                            if (result.status === 'SUCCESS') { successCount++; resultSummary += `${deviceName} OK. `; deviceIdsToRefresh.push(deviceId); }
+                            else { failCount++; resultSummary += `${deviceName} FAILED (${result.errorCode || 'unknown'}). `; }
+                        });
+                        if (successCount > 0 && failCount === 0) toast({ title: "Timed Action Successful", description: `${actionSummary} - ${successCount} action(s) completed.`});
+                        else if (successCount > 0 && failCount > 0) toast({ title: "Some Timed Actions Sent", description: `${actionSummary} - ${successCount} OK, ${failCount} failed.`});
+                        else toast({ title: "Timed Action Failed", description: `${actionSummary} - All ${failCount} action(s) failed.`, variant: "destructive"});
+                        
+                        if (deviceIdsToRefresh.length > 0 && onRefreshDeviceStates) {
+                           await onRefreshDeviceStates(deviceIdsToRefresh);
+                        }
+                    } catch (execError: any) {
+                        toast({ title: "API Error (Timed Action)", description: `Error for ${actionSummary}: ${execError.message}`, variant: "destructive" });
+                    }
+                }
+                activeTimers.delete(timerId);
+            }, delay * 1000);
+            activeTimers.set(timerId, timeoutId);
+        });
+
+        if (timerFeedbackCombined) {
+            setFeedbackMessage(timerFeedbackCombined.trim());
+        }
+
+
+        if (commandsToExecute.length === 0 && timedActions.length === 0) {
             const finalMsg = actionSummaryForDisplay || "No valid actions to execute.";
             setFeedbackMessage(finalMsg); 
             setFeedbackType(finalMsg.includes("not found") || finalMsg.includes("offline") || finalMsg.includes("not supported") ? 'error' : 'info');
-            setIsProcessingCommand(false); return;
         }
+        
+        // Only set isProcessingCommand to false if no timers are active,
+        // or after all immediate commands are done and timers have been set.
+        // The visual "processing" state should end once initial setup is done.
+        setIsProcessingCommand(false);
 
-        setFeedbackMessage(`Sending ${commandsToExecute.length} command(s): ${actionSummaryForDisplay.trim()}`); 
-        setFeedbackType('info');
-
-        try {
-            const execResults = await executeDeviceCommandsOnApi(commandsToExecute);
-            let successCount = 0; let failCount = 0; let resultSummary = ""; const deviceIdsToRefresh: string[] = [];
-            execResults.commands.forEach(result => {
-              const deviceId = result.ids[0]; const device = selectedDevices.find(d => d.id === deviceId);
-              const deviceName = device ? device.name : deviceId;
-              if (result.status === 'SUCCESS') { successCount++; resultSummary += `${deviceName} OK. `; deviceIdsToRefresh.push(deviceId); }
-              else { failCount++; resultSummary += `${deviceName} FAILED (${result.errorCode || 'unknown'}). `; }
-            });
-            if (successCount > 0 && failCount === 0) toast({ title: "Commands Successful", description: `${successCount} action(s) sent.`});
-            else if (successCount > 0 && failCount > 0) toast({ title: "Some Commands Sent", description: `${successCount} OK, ${failCount} failed.`});
-            else toast({ title: "Commands Failed", description: `All ${failCount} action(s) failed.`, variant: "destructive"});
-            
-            const finalFeedbackMsg = resultSummary.trim() || (successCount > 0 ? "Actions completed." : "Actions failed.");
-            setFeedbackMessage(finalFeedbackMsg); 
-            const finalFeedbackType = failCount === 0 ? 'success' : (successCount > 0 ? 'info' : 'error');
-            setFeedbackType(finalFeedbackType);
-            
-            if (deviceIdsToRefresh.length > 0 && onRefreshDeviceStates) {
-              setTimeout(() => { // Give a moment for bridge to update state if it's slow
-                setFeedbackMessage(`Refreshing states for ${deviceIdsToRefresh.length} device(s)...`); setFeedbackType('info');
-                onRefreshDeviceStates(deviceIdsToRefresh).finally(() => {
-                    setFeedbackMessage(finalFeedbackMsg); setFeedbackType(finalFeedbackType); 
-                    setIsProcessingCommand(false);
-                });
-              }, 1000); 
-            } else { setIsProcessingCommand(false); }
-        } catch (execError: any) {
-            const msg = `API Error: ${execError.message}`;
-            setFeedbackMessage(msg); setFeedbackType('error'); toast({ title: "API Error", description: msg, variant: "destructive" });
-            setIsProcessingCommand(false);
-        }
       } else if (genkitResponse.intentType !== 'query' && genkitResponse.intentType !== 'general') { 
           setFeedbackMessage(`Unknown intent or no actions/query found.`); setFeedbackType('error'); setIsProcessingCommand(false);
       }
     };
 
-    if (genkitResponse.suggestedConfirmation && (genkitResponse.intentType === 'action' || (genkitResponse.intentType === 'query' && genkitResponse.suggestedConfirmation.toLowerCase().includes("check")))) {
-       setFeedbackMessage(genkitResponse.suggestedConfirmation);
-       setFeedbackType('info'); // Don't speak this confirmation for actions, only queries if speech is desired
-       if (genkitResponse.intentType === 'query' && speechSynthesisApiAvailable && userPreferences?.selectedVoiceURI){
-           speak(genkitResponse.suggestedConfirmation, executeAfterConfirmation);
+    if (genkitResponse.suggestedConfirmation && 
+        (genkitResponse.intentType === 'action' || 
+         (genkitResponse.intentType === 'query' && genkitResponse.suggestedConfirmation.toLowerCase().includes("check"))
+        )
+       ) {
+       if (genkitResponse.intentType === 'action' || (genkitResponse.intentType === 'query' && speechSynthesisApiAvailable && userPreferences?.selectedVoiceURI)) {
+            // Speak confirmation for actions and for queries if voice is enabled
+            setFeedbackMessage(genkitResponse.suggestedConfirmation);
+            setFeedbackType('speaking'); // Indicate speaking
+            speak(genkitResponse.suggestedConfirmation, executeAfterOptionalConfirmation);
        } else {
-           executeAfterConfirmation();
+           // For queries without voice, just show the confirmation textually
+           setFeedbackMessage(genkitResponse.suggestedConfirmation);
+           setFeedbackType('info');
+           executeAfterOptionalConfirmation();
        }
     } else {
-        executeAfterConfirmation();
+        executeAfterOptionalConfirmation();
     }
   }, [
       toast, selectedDevices, speak, onRefreshDeviceStates, 
       speechSynthesisApiAvailable, userPreferences, isLoadingPreferences, availableVoices, 
-      rooms, deviceGroups, commandText, 
-      isWaitingForCommandAfterWakeWord, // state dependency
+      rooms, deviceGroups, 
+      isWaitingForCommandAfterWakeWord, 
       setIsWaitingForCommandAfterWakeWord, setIsProcessingCommand, setCommandText, 
-      setFeedbackMessage, setFeedbackType, setProcessedCommandDetails // setters
+      setFeedbackMessage, setFeedbackType, setProcessedCommandDetails
     ]);
 
-  // Effect to initialize SpeechRecognition and set its static properties
   useEffect(() => {
     const SpeechRecognitionAPI = (typeof window !== 'undefined') ? (window.SpeechRecognition || window.webkitSpeechRecognition) : undefined;
     if (SpeechRecognitionAPI) {
@@ -472,7 +558,6 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       setSpeechRecognitionApiAvailable(false);
       setMicPermissionError("Voice recognition not supported by this browser.");
     }
-    // Cleanup function for when the component unmounts
     return () => { 
       if (recognitionRef.current) { 
         try { 
@@ -486,10 +571,11 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       }
       if (waitForCommandTimeoutRef.current) clearTimeout(waitForCommandTimeoutRef.current);
       if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
+       activeTimers.forEach(timeoutId => clearTimeout(timeoutId));
+       activeTimers.clear();
     };
-  }, []); // Runs once on mount
+  }, []); 
 
-  // Effect to manage SpeechRecognition event handlers - re-runs if these key states/callbacks change
   useEffect(() => {
     const currentRecognition = recognitionRef.current;
     if (!currentRecognition || !speechRecognitionApiAvailable) return;
@@ -501,6 +587,9 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       const transcript = event.results[event.results.length - 1][0].transcript.trim();
       if (isWaitingForCommandAfterWakeWord || transcript.toLowerCase().startsWith(WAKE_WORD.toLowerCase())) {
         handleInterpretAndExecuteCommand(transcript);
+      } else {
+        // If not waiting for command and doesn't start with wake word, do nothing or log.
+        // console.log("Ignored speech (no wake word):", transcript);
       }
     };
 
@@ -527,23 +616,21 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
     currentRecognition.onstart = () => { setMicActuallyActive(true); setMicPermissionError(null); };
     currentRecognition.onend = () => {
       setMicActuallyActive(false);
-      // The main useEffect below will handle restart logic.
+      // Main useEffect below handles restart based on userDesiredListening, isProcessingCommand etc.
     };
   }, [
       speechRecognitionApiAvailable, handleInterpretAndExecuteCommand, toast, 
       micPermissionError, userDesiredListening, 
-      isProcessingCommand, isWaitingForCommandAfterWakeWord, // Key states
+      isProcessingCommand, isWaitingForCommandAfterWakeWord, 
       setMicActuallyActive, setMicPermissionError, setIsWaitingForCommandAfterWakeWord, 
-      setFeedbackMessage, // Setters used in handlers
-      COMMAND_WAIT_TIMEOUT // For timeout logic within handlers if any
+      setFeedbackMessage
     ]);
 
-  // Effect to start/stop mic based on component state
   useEffect(() => {
     const currentRecognition = recognitionRef.current;
     if (!currentRecognition || !speechRecognitionApiAvailable) return;
 
-    const shouldBeListening = userDesiredListening && !micPermissionError && (!isProcessingCommand || isWaitingForCommandAfterWakeWord);
+    const shouldBeListening = userDesiredListening && !micPermissionError && (!isProcessingCommand || isWaitingForCommandAfterWakeWordRef.current);
 
     if (shouldBeListening && !micActuallyActive) {
       try {
@@ -557,7 +644,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
     } else if (!shouldBeListening && micActuallyActive) { 
       try {
         currentRecognition.stop();
-        if (isWaitingForCommandAfterWakeWord) { 
+        if (isWaitingForCommandAfterWakeWordRef.current) { 
           setIsWaitingForCommandAfterWakeWord(false);
           if(waitForCommandTimeoutRef.current) clearTimeout(waitForCommandTimeoutRef.current);
           setFeedbackMessage("Command input cancelled."); setFeedbackType("info");
@@ -566,7 +653,10 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
         if (e.name !== 'InvalidStateError') console.warn("Error stopping mic in useEffect:", e);
       }
     }
-  }, [userDesiredListening, isProcessingCommand, isWaitingForCommandAfterWakeWord, micActuallyActive, speechRecognitionApiAvailable, micPermissionError]);
+  }, [userDesiredListening, isProcessingCommand, micActuallyActive, speechRecognitionApiAvailable, micPermissionError, setIsWaitingForCommandAfterWakeWord, setFeedbackMessage, setFeedbackType]);
+  // Note: isWaitingForCommandAfterWakeWordRef.current is used for shouldBeListening condition
+  // but isWaitingForCommandAfterWakeWord (state) might be better if this effect needs to react to its change directly for stopping.
+  // Let's test this. The main concern is the start/stop loop.
 
   const handleMicButtonClick = () => {
     if (!speechRecognitionApiAvailable) { 
@@ -626,6 +716,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       case 'info': return <Info className="h-5 w-5 text-blue-400" />;
       case 'speaking': return <Volume2 className="h-5 w-5 text-purple-400" />;
       case 'general': return <MessageSquare className="h-5 w-5 text-teal-400" />;
+      case 'timer': return <TimerIcon className="h-5 w-5 text-orange-400" />;
       default: return <Info className="h-5 w-5 text-blue-400" />; 
     }
   };
@@ -636,6 +727,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
       case 'info': return 'Information';
       case 'speaking': return 'HomePilot Speaking';
       case 'general': return 'HomePilot says';
+      case 'timer': return 'Timer Information';
       default: return 'Status';
     }
   };
@@ -681,6 +773,11 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
               <CardHeader><CardTitle className="flex items-center text-xl"><Power className="h-5 w-5 mr-2" /> Action Command</CardTitle></CardHeader>
               <CardContent className="space-y-2 text-base">
                 <p><strong className="text-foreground">Interpreted:</strong> <span className="text-accent">{processedCommandDetails.summary || 'Processing action...'}</span></p>
+                 {processedCommandDetails.actions.map((act: SingleDeviceAction, index: number) => act.delayInSeconds && (
+                  <p key={index} className="text-sm text-muted-foreground">
+                    <TimerIcon className="inline h-4 w-4 mr-1" /> Action for "{act.device}" is scheduled in {formatSeconds(act.delayInSeconds)}.
+                  </p>
+                ))}
               </CardContent>
             </Card>
           )}
@@ -701,6 +798,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
                   : feedbackType === 'error' ? 'border-destructive/50 text-destructive-foreground' 
                   : feedbackType === 'speaking' ? 'border-purple-500/50 bg-purple-900/20 text-purple-300'
                   : feedbackType === 'general' ? 'border-teal-500/50 bg-teal-900/20 text-teal-300'
+                  : feedbackType === 'timer' ? 'border-orange-500/50 bg-orange-900/20 text-orange-300'
                   : 'border-blue-500/50 bg-blue-900/20 text-blue-300' 
                 }`}>
               {feedbackIcon()}
@@ -709,6 +807,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
                   : feedbackType === 'error' ? 'text-red-200' 
                   : feedbackType === 'speaking' ? 'text-purple-200'
                   : feedbackType === 'general' ? 'text-teal-200'
+                  : feedbackType === 'timer' ? 'text-orange-200'
                   : 'text-blue-200'
                 }`}>
                 {feedbackTitle()}
@@ -718,7 +817,7 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
           )}
         </CardContent>
         <CardFooter className="text-center">
-          <p className="text-xs text-muted-foreground"> Dashboard devices update via API. Voice output quality varies. </p>
+          <p className="text-xs text-muted-foreground"> Dashboard devices update via API. Voice output quality varies. Timers are client-side and will be lost if page is closed. </p>
         </CardFooter>
       </Card>
 
@@ -728,15 +827,17 @@ export function VoiceControl({ selectedDevices, onRefreshDeviceStates }: VoiceCo
           <li>`"{WAKE_WORD}"` (pause) `"turn on kitchen lights"`</li>
           <li>`"{WAKE_WORD} turn on Main Light and turn off Table Light"`</li>
           <li>`"{WAKE_WORD} turn off all fans"`</li>
-          <li>`"{WAKE_WORD} turn on the Office devices"` (if 'Office' is a room/group)</li>
+          <li>`"{WAKE_WORD} turn on the Office devices in 2 minutes"`</li>
           <li>`"{WAKE_WORD} what is the temperature?"`</li>
           <li>`"{WAKE_WORD} is the main light on?"`</li>
+          <li>`"{WAKE_WORD} what time is it?"`</li>
           <li>`"{WAKE_WORD} hello"`</li>
           <li>`"{WAKE_WORD} tell me something interesting"`</li>
         </ul>
          <h3 className="text-lg font-semibold mt-4 mb-2 text-center text-foreground">Example Typed Commands</h3>
         <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground text-center">
           <li>`"Turn on kitchen lights"`</li>
+          <li>`"Turn off fan in 10 minutes"`</li>
           <li>`"What is the temperature?"`</li>
           <li>`"Hello there"`</li>
         </ul>
