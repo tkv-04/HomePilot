@@ -2,7 +2,7 @@
 'use server';
 /**
  * @fileOverview This file defines a Genkit flow to interpret voice commands for home automation
- * or general conversation. It can understand single queries, multiple actions on devices (including groups), or
+ * or general conversation. It can understand single queries, multiple actions on devices (including groups, rooms), or
  * respond to general chitchat, including telling the time and answering general knowledge questions.
  *
  * - interpretVoiceCommand - A function that takes a voice command as input and returns an
@@ -23,14 +23,14 @@ export type InterpretVoiceCommandInput = z.infer<
 >;
 
 const SingleDeviceActionSchema = z.object({
-  device: z.string().describe('The target device or group for the action. This can be a specific device name (e.g., "kitchen light"), a general group (e.g., "all lights", "all fans"), or a room-specific group (e.g., "living room lights", "bedroom fan").'),
+  device: z.string().describe('The target device, room, or group for the action. This can be a specific device name (e.g., "kitchen light"), a general group (e.g., "all lights", "all fans"), a room-specific group (e.g., "living room lights", "bedroom fan"), or a user-defined room or group name (e.g., "Office", "Downstairs Lights").'),
   action: z.string().describe('The action to perform on the device or group (e.g., "turn on", "turn off"). Make this concise.'),
 });
 
 const InterpretVoiceCommandOutputSchema = z.object({
   intentType: z.enum(['action', 'query', 'general']).describe('The type of intent: "action" to perform on device(s)/group(s), "query" to get information, or "general" for conversational responses.'),
-  actions: z.array(SingleDeviceActionSchema).optional().describe('A list of actions to perform on devices or groups. Used when intentType is "action". If multiple distinct actions/devices are mentioned, list them all here. For group commands like "turn on all lights", this array will contain one entry with device="all lights".'),
-  queryTarget: z.string().optional().describe('The target device or topic for the query (e.g., "kitchen light", "living room temperature sensor"). Used when intentType is "query".'),
+  actions: z.array(SingleDeviceActionSchema).optional().describe('A list of actions to perform on devices or groups. Used when intentType is "action". If multiple distinct actions/devices/rooms/groups are mentioned, list them all here. For group commands like "turn on all lights", this array will contain one entry with device="all lights". For a command like "turn on the office lights", if "Office" is a known room or group, the device might be "Office".'),
+  queryTarget: z.string().optional().describe('The target device or topic for the query (e.g., "kitchen light", "living room temperature sensor", "Office temperature"). Used when intentType is "query".'),
   queryType: z.string().optional().describe('The type of information requested (e.g.,"get temperature", "get status", "is on"). Used when intentType is "query". Make this concise.'),
   suggestedConfirmation: z.string().optional().describe('A polite, natural language phrase confirming the understood command if it is an "action" or "query". e.g., "Okay, turning on all kitchen lights." or "Let me check that for you." This field should NOT be populated if intentType is "general".'),
   generalResponse: z.string().optional().describe('A conversational response if the command is not a home automation action or query (i.e., intentType is "general"). This can include answers to questions like "what time is it?" or answers to general knowledge questions.'),
@@ -55,21 +55,21 @@ const prompt = ai.definePrompt({
 Your primary task is to determine if the command is for home automation (ACTION or QUERY) or if it's a GENERAL conversational input.
 
 Given a voice command:
-1.  First, try to determine if the user wants to perform a home automation ACTION (e.g., "turn on the light", "turn off all fans", "turn on the kitchen lights and the living room AC") or make a home automation QUERY (e.g., "what is the temperature?", "is the living room light on?").
+1.  First, try to determine if the user wants to perform a home automation ACTION (e.g., "turn on the light", "turn off all fans", "turn on the kitchen lights and the living room AC", "turn on the Office devices") or make a home automation QUERY (e.g., "what is the temperature in the Office?", "is the living room light on?"). "Office" or "Downstairs" could be user-defined room or group names.
 
 2.  If it's a home automation ACTION:
     - Set 'intentType' to 'action'.
-    - Extract ALL actions and their target devices/groups mentioned. Populate the 'actions' array.
-    - For each item in 'actions', specify the 'device' and the 'action'.
-        - 'device' can be a specific device name (e.g., "main lamp"), a general group (e.g., "all lights", "all fans"), or a room-specific group (e.g., "kitchen lights", "bedroom fan").
+    - Extract ALL actions and their target devices/rooms/groups mentioned. Populate the 'actions' array.
+    - For each item in 'actions', specify the 'device' (which could be a device name, a room name, a group name like "all lights", or a user-defined group name) and the 'action'.
+        - 'device' can be a specific device name (e.g., "main lamp"), a user-defined room/group (e.g., "Office", "Movie Time Scene"), a general group (e.g., "all lights", "all fans"), or a room-specific group (e.g., "kitchen lights", "bedroom fan").
         - 'action' should be concise (e.g., "turn on", "turn off").
-    - Formulate a brief, polite, natural language confirmation phrase in 'suggestedConfirmation' (e.g., "Okay, I'll turn on the kitchen lights and the living room AC.").
+    - Formulate a brief, polite, natural language confirmation phrase in 'suggestedConfirmation' (e.g., "Okay, I'll turn on the kitchen lights and the living room AC." or "Okay, turning on the Office devices.").
     - Do NOT populate 'generalResponse'.
 
 3.  If it's a home automation QUERY:
     - Set 'intentType' to 'query'.
-    - Determine what information is being asked for and the target device/topic.
-    - Populate 'queryTarget' (e.g., "living room temperature sensor", "fan") and 'queryType' (e.g., "get temperature", "get status", "is on"). Make queryType concise.
+    - Determine what information is being asked for and the target device/room/topic.
+    - Populate 'queryTarget' (e.g., "living room temperature sensor", "fan", "Office temperature") and 'queryType' (e.g., "get temperature", "get status", "is on"). Make queryType concise.
     - You can optionally provide a short phrase in 'suggestedConfirmation' like "Let me check that for you."
     - Do NOT populate 'generalResponse'.
 
@@ -87,6 +87,8 @@ Examples:
     -> intentType: "action", actions: [{ device: "all lights", action: "turn off" }], suggestedConfirmation: "Okay, turning off all lights."
   - Voice Command: "Jarvis, activate the bedroom fans"
     -> intentType: "action", actions: [{ device: "bedroom fans", action: "turn on" }], suggestedConfirmation: "Okay, activating the bedroom fans."
+  - Voice Command: "Jarvis, turn on the Office." (Assuming "Office" is a user-defined room/group)
+    -> intentType: "action", actions: [{ device: "Office", action: "turn on" }], suggestedConfirmation: "Okay, turning on the Office devices."
   - Voice Command: "Jarvis, what is the temperature in the living room?"
     -> intentType: "query", queryTarget: "living room temperature sensor", queryType: "get temperature", suggestedConfirmation: "Let me check the living room temperature."
   - Voice Command: "Jarvis, hello there"
@@ -95,7 +97,7 @@ Examples:
     -> (AI uses getCurrentTime tool, gets e.g., "3:45 PM")
     -> intentType: "general", generalResponse: "The current time is 3:45 PM."
 
-The 'device' field in actions or 'queryTarget' in queries should be the name/group as commonly referred to by the user.
+The 'device' field in actions or 'queryTarget' in queries should be the name/group/room as commonly referred to by the user.
 
 Voice Command: {{{voiceCommand}}}`,
 });
