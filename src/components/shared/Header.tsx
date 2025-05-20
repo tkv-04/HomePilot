@@ -5,7 +5,7 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
-import { LogOut, Home, Settings2, SettingsIcon } from 'lucide-react'; // Added SettingsIcon
+import { LogOut, Home, Settings2, SettingsIcon, ListChecks } from 'lucide-react'; // Added ListChecks
 
 export function Header() {
   const { user, logout } = useAuth();
@@ -21,9 +21,10 @@ export function Header() {
           {user && (
             <>
               <span className="text-sm text-muted-foreground hidden md:inline">Welcome, {user.email}</span>
+              {/* Link to manage dashboard devices - can be removed if Settings page is preferred entry */}
               <Button variant="ghost" size="icon" asChild title="Manage Dashboard Devices">
                 <Link href="/manage-devices">
-                  <Settings2 className="h-5 w-5 text-foreground hover:text-accent" />
+                  <ListChecks className="h-5 w-5 text-foreground hover:text-accent" />
                 </Link>
               </Button>
               <Button variant="ghost" size="icon" asChild title="Settings">

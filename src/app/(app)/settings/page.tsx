@@ -6,7 +6,7 @@ import { VoiceSettings } from '@/components/settings/VoiceSettings';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { Settings2Icon, ListChecks } from 'lucide-react';
+import { Settings2Icon, ListChecks, HomeIcon, Layers3 } from 'lucide-react'; // Added HomeIcon, Layers3
 import Link from 'next/link';
 
 export default function SettingsPage() {
@@ -32,7 +32,7 @@ export default function SettingsPage() {
         <CardHeader>
           <CardTitle className="flex items-center text-xl">
             <ListChecks className="mr-2 h-5 w-5 text-primary" />
-            Device Management
+            Dashboard Device Management
           </CardTitle>
           <CardDescription>
             Choose which devices appear on your main dashboard.
@@ -49,6 +49,31 @@ export default function SettingsPage() {
           </Button>
         </CardContent>
       </Card>
+
+      <Separator />
+
+      <Card className="shadow-lg">
+        <CardHeader>
+          <CardTitle className="flex items-center text-xl">
+            <HomeIcon className="mr-2 h-5 w-5 text-primary" /> {/* Changed icon */}
+            Room & Group Management
+          </CardTitle>
+          <CardDescription>
+            Define rooms and create custom device groups for easier control.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground mb-4">
+            Organize your smart home devices by creating rooms (e.g., "Living Room", "Bedroom") and custom groups (e.g., "All Downstairs Lights").
+          </p>
+          <Button asChild size="lg">
+            <Link href="/settings/manage-rooms-groups">
+              <Layers3 className="mr-2 h-5 w-5" /> Manage Rooms & Groups
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
+
     </div>
   );
 }
