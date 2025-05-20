@@ -17,21 +17,23 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
-import { PlusCircle, Edit3, Trash2, HomeIcon, Layers3, Save, X, Loader2, AlertCircle } from 'lucide-react';
+import { PlusCircle, Edit3, Trash2, HomeIcon, Layers3, Save, X, Loader2, AlertCircle, Settings2 } from 'lucide-react'; // Added Settings2
 import { v4 as uuidv4 } from 'uuid'; // For generating unique IDs
+import Link from 'next/link'; // Added Link for prompt
 
 type ManageableItem = Room | DeviceGroup;
 type ItemType = 'room' | 'group';
 
 export function ManageRoomsAndGroupsContent() {
   const {
+    preferences, // Added preferences to get selectedDeviceIds
     rooms, addRoom, updateRoom, deleteRoom,
     deviceGroups, addDeviceGroup, updateDeviceGroup, deleteDeviceGroup,
     isLoading: isLoadingPreferences, error: preferencesError
   } = useUserPreferences();
   const { toast } = useToast();
 
-  const [allDevices, setAllDevices] = useState<Device[]>([]);
+  const [allApiDevices, setAllApiDevices] = useState<Device[]>([]);
   const [isLoadingApiDevices, setIsLoadingApiDevices] = useState(true);
   const [apiDevicesError, setApiDevicesError] = useState<string | null>(null);
 
@@ -47,7 +49,7 @@ export function ManageRoomsAndGroupsContent() {
       setApiDevicesError(null);
       try {
         const fetched = await fetchDevicesFromApi();
-        setAllDevices(fetched);
+        setAllApiDevices(fetched);
       } catch (err: any) {
         setApiDevicesError(err.message || "Failed to fetch devices from bridge.");
         toast({ title: "Error", description: "Could not load available devices.", variant: "destructive" });
@@ -58,11 +60,20 @@ export function ManageRoomsAndGroupsContent() {
     loadAllDevices();
   }, [toast]);
 
+  const selectableDevicesForRoomsAndGroups = useMemo(() => {
+    if (!preferences?.selectedDeviceIds || isLoadingPreferences || isLoadingApiDevices || !allApiDevices) {
+      return [];
+    }
+    return allApiDevices.filter(device => preferences.selectedDeviceIds!.includes(device.id));
+  }, [allApiDevices, preferences, isLoadingPreferences, isLoadingApiDevices]);
+
   const openDialog = (type: ItemType, item?: ManageableItem) => {
     setCurrentItemType(type);
     if (item) {
       setIsEditing(true);
-      setCurrentDialogItem({ ...item });
+      // Ensure deviceIds in the item are only those present in selectableDevicesForRoomsAndGroups
+      const validDeviceIds = item.deviceIds.filter(id => selectableDevicesForRoomsAndGroups.some(d => d.id === id));
+      setCurrentDialogItem({ ...item, deviceIds: validDeviceIds });
     } else {
       setIsEditing(false);
       setCurrentDialogItem({ name: '', deviceIds: [] });
@@ -116,7 +127,7 @@ export function ManageRoomsAndGroupsContent() {
   };
 
   const handleDeleteItem = async (type: ItemType, id: string, name: string) => {
-    setIsSaving(true); // Use isSaving to disable delete buttons too
+    setIsSaving(true); 
     try {
       if (type === 'room') {
         await deleteRoom(id);
@@ -185,7 +196,11 @@ export function ManageRoomsAndGroupsContent() {
             </CardHeader>
             <CardContent className="pt-0 pb-4">
               <p className="text-sm text-muted-foreground">
-                Devices: {item.deviceIds.length > 0 ? item.deviceIds.map(id => allDevices.find(d => d.id === id)?.name || id).join(', ') : 'None'}
+                Devices: {item.deviceIds.length > 0 
+                  ? item.deviceIds
+                      .map(id => allApiDevices.find(d => d.id === id)?.name || id)
+                      .join(', ') 
+                  : 'None'}
               </p>
             </CardContent>
           </Card>
@@ -208,7 +223,7 @@ export function ManageRoomsAndGroupsContent() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center"><HomeIcon className="mr-2 h-6 w-6 text-primary" />Manage Rooms</CardTitle>
-              <CardDescription>Define rooms and assign devices to them.</CardDescription>
+              <CardDescription>Define rooms and assign devices to them from your dashboard selection.</CardDescription>
             </CardHeader>
             <CardContent>
               {renderItemList(rooms, 'room', HomeIcon)}
@@ -219,7 +234,7 @@ export function ManageRoomsAndGroupsContent() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center"><Layers3 className="mr-2 h-6 w-6 text-primary" />Manage Device Groups</CardTitle>
-              <CardDescription>Create custom groups of devices for targeted control.</CardDescription>
+              <CardDescription>Create custom groups of devices from your dashboard selection.</CardDescription>
             </CardHeader>
             <CardContent>
               {renderItemList(deviceGroups, 'group', Layers3)}
@@ -233,7 +248,7 @@ export function ManageRoomsAndGroupsContent() {
           <DialogHeader>
             <DialogTitle>{isEditing ? 'Edit' : 'Add New'} {currentItemType?.charAt(0).toUpperCase() + currentItemType?.slice(1)}</DialogTitle>
             <DialogDescription>
-              {isEditing ? 'Modify the details for this' : 'Create a new'} {currentItemType}. Select devices to include.
+              {isEditing ? 'Modify the details for this' : 'Create a new'} {currentItemType}. Select devices to include from your dashboard-selected devices.
             </DialogDescription>
           </DialogHeader>
           {currentDialogItem && (
@@ -244,17 +259,25 @@ export function ManageRoomsAndGroupsContent() {
               </div>
               <Label>Select Devices ({currentDialogItem.deviceIds.length} selected)</Label>
               <ScrollArea className="h-[200px] w-full rounded-md border p-4">
-                {allDevices.length === 0 && !isLoadingApiDevices && <p>No devices available from your bridge.</p>}
-                {isLoadingApiDevices && <p>Loading devices...</p>}
-                {allDevices.map(device => (
+                {isLoadingApiDevices && <p>Loading available devices...</p>}
+                {!isLoadingApiDevices && selectableDevicesForRoomsAndGroups.length === 0 && (
+                  <div className="text-center text-muted-foreground py-4">
+                    <p>No devices available to add.</p>
+                    <p className="text-sm">Ensure you have selected devices on your main dashboard first.</p>
+                    <Button variant="link" asChild className="mt-2">
+                      <Link href="/manage-devices"><Settings2 className="mr-2 h-4 w-4" />Go to Manage Dashboard Devices</Link>
+                    </Button>
+                  </div>
+                )}
+                {selectableDevicesForRoomsAndGroups.map(device => (
                   <div key={device.id} className="flex items-center space-x-2 mb-2">
                     <Checkbox
-                      id={`device-${device.id}`}
+                      id={`dialog-device-${device.id}`}
                       checked={currentDialogItem.deviceIds.includes(device.id)}
                       onCheckedChange={() => handleDialogDeviceToggle(device.id)}
                       disabled={isSaving}
                     />
-                    <label htmlFor={`device-${device.id}`} className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                    <label htmlFor={`dialog-device-${device.id}`} className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                       {device.name} <span className="text-xs text-muted-foreground">({device.type})</span>
                     </label>
                   </div>
@@ -266,7 +289,11 @@ export function ManageRoomsAndGroupsContent() {
             <DialogClose asChild>
               <Button type="button" variant="outline" disabled={isSaving}>Cancel</Button>
             </DialogClose>
-            <Button type="submit" onClick={handleDialogSave} disabled={isSaving || !currentDialogItem?.name.trim()}>
+            <Button 
+              type="submit" 
+              onClick={handleDialogSave} 
+              disabled={isSaving || !currentDialogItem?.name.trim() || selectableDevicesForRoomsAndGroups.length === 0 && !isEditing}
+            >
               {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
               {isEditing ? 'Save Changes' : 'Create'}
             </Button>
