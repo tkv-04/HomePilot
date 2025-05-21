@@ -5,10 +5,11 @@
 import type { ReactNode } from 'react';
 import React, { createContext, useState, useEffect, useContext, useCallback } from 'react';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc, onSnapshot, updateDoc } from 'firebase/firestore'; // Removed 'collection' as it's not used for ID gen now
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import type { UserPreferences, Room, DeviceGroup } from '@/types/preferences';
+import type { AutomationRule } from '@/types/automations'; // Added
 import { useAuth } from '@/hooks/useAuth';
-import { v4 as uuidv4 } from 'uuid'; // Import uuid
+import { v4 as uuidv4 } from 'uuid';
 
 interface UserPreferencesContextType {
   preferences: UserPreferences | null;
@@ -25,6 +26,13 @@ interface UserPreferencesContextType {
   updateDeviceGroup: (groupId: string, updatedGroup: Partial<Omit<DeviceGroup, 'id'>>) => Promise<void>;
   deleteDeviceGroup: (groupId: string) => Promise<void>;
 
+  automations: AutomationRule[]; // Added
+  addAutomation: (automation: Omit<AutomationRule, 'id'>) => Promise<void>; // Added
+  updateAutomation: (automationId: string, updatedAutomation: Partial<Omit<AutomationRule, 'id'>>) => Promise<void>; // Added
+  deleteAutomation: (automationId: string) => Promise<void>; // Added
+  toggleAutomationEnable: (automationId: string, isEnabled: boolean) => Promise<void>; // Added
+
+
   isLoading: boolean;
   error: Error | null;
 }
@@ -36,6 +44,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
   const [preferences, setPreferences] = useState<UserPreferences | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [deviceGroups, setDeviceGroups] = useState<DeviceGroup[]>([]);
+  const [automations, setAutomations] = useState<AutomationRule[]>([]); // Added
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -51,6 +60,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
       setPreferences(null);
       setRooms([]);
       setDeviceGroups([]);
+      setAutomations([]); // Added
       setIsLoading(false);
       return;
     }
@@ -65,17 +75,19 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
         setPreferences(data);
         setRooms(data.rooms || []);
         setDeviceGroups(data.deviceGroups || []);
+        setAutomations(data.automations || []); // Added
       } else {
         const defaultPrefs: UserPreferences = {
           selectedDeviceIds: [],
           selectedVoiceURI: null,
           rooms: [],
           deviceGroups: [],
+          automations: [], // Added
         };
         setPreferences(defaultPrefs);
         setRooms([]);
         setDeviceGroups([]);
-        // Optionally create the document with defaults if it doesn't exist
+        setAutomations([]); // Added
         setDoc(prefDocRef, defaultPrefs).catch(err => {
           console.error("Error creating initial preferences doc:", err);
           setError(err as Error);
@@ -99,8 +111,6 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
     }
     const prefDocRef = doc(db, 'userPreferences', userId);
     try {
-      // Using setDoc with merge: true is safer as it creates the doc if it doesn't exist,
-      // or merges if it does. updateDoc throws an error if the document doesn't exist.
       await setDoc(prefDocRef, newPrefs, { merge: true });
     } catch (err: any) {
       console.error("Error updating user preferences in Firestore:", err);
@@ -120,7 +130,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
   // Room Management
   const addRoom = useCallback(async (roomData: Omit<Room, 'id'>) => {
     if (!userId) throw new Error("User not authenticated.");
-    const newId = uuidv4(); // Use uuid for ID generation
+    const newId = uuidv4();
     const newRoom: Room = { ...roomData, id: newId };
     const newRooms = [...rooms, newRoom];
     await updatePreferencesInFirestore({ rooms: newRooms });
@@ -141,7 +151,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
   // Device Group Management
   const addDeviceGroup = useCallback(async (groupData: Omit<DeviceGroup, 'id'>) => {
     if (!userId) throw new Error("User not authenticated.");
-    const newId = uuidv4(); // Use uuid for ID generation
+    const newId = uuidv4();
     const newGroup: DeviceGroup = { ...groupData, id: newId };
     const newGroups = [...deviceGroups, newGroup];
     await updatePreferencesInFirestore({ deviceGroups: newGroups });
@@ -159,6 +169,33 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
     await updatePreferencesInFirestore({ deviceGroups: newGroups });
   }, [userId, deviceGroups, updatePreferencesInFirestore]);
 
+  // Automation Management - Added
+  const addAutomation = useCallback(async (automationData: Omit<AutomationRule, 'id'>) => {
+    if (!userId) throw new Error("User not authenticated.");
+    const newId = uuidv4();
+    const newAutomation: AutomationRule = { ...automationData, id: newId };
+    const newAutomations = [...automations, newAutomation];
+    await updatePreferencesInFirestore({ automations: newAutomations });
+  }, [userId, automations, updatePreferencesInFirestore]);
+
+  const updateAutomation = useCallback(async (automationId: string, updatedAutomationData: Partial<Omit<AutomationRule, 'id'>>) => {
+    if (!userId) throw new Error("User not authenticated.");
+    const newAutomations = automations.map(a => a.id === automationId ? { ...a, ...updatedAutomationData } : a);
+    await updatePreferencesInFirestore({ automations: newAutomations });
+  }, [userId, automations, updatePreferencesInFirestore]);
+
+  const deleteAutomation = useCallback(async (automationId: string) => {
+    if (!userId) throw new Error("User not authenticated.");
+    const newAutomations = automations.filter(a => a.id !== automationId);
+    await updatePreferencesInFirestore({ automations: newAutomations });
+  }, [userId, automations, updatePreferencesInFirestore]);
+  
+  const toggleAutomationEnable = useCallback(async (automationId: string, isEnabled: boolean) => {
+    if (!userId) throw new Error("User not authenticated.");
+    const newAutomations = automations.map(a => a.id === automationId ? { ...a, isEnabled } : a);
+    await updatePreferencesInFirestore({ automations: newAutomations });
+  }, [userId, automations, updatePreferencesInFirestore]);
+
 
   return (
     <UserPreferencesContext.Provider value={{
@@ -173,6 +210,11 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
       addDeviceGroup,
       updateDeviceGroup,
       deleteDeviceGroup,
+      automations, // Added
+      addAutomation, // Added
+      updateAutomation, // Added
+      deleteAutomation, // Added
+      toggleAutomationEnable, // Added
       isLoading,
       error
     }}>

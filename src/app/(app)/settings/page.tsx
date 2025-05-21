@@ -6,7 +6,7 @@ import { VoiceSettings } from '@/components/settings/VoiceSettings';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { Settings2Icon, ListChecks, HomeIcon, Layers3 } from 'lucide-react'; // Added HomeIcon, Layers3
+import { Settings2Icon, ListChecks, HomeIcon, Layers3, Zap } from 'lucide-react'; // Added Zap
 import Link from 'next/link';
 
 export default function SettingsPage() {
@@ -55,7 +55,7 @@ export default function SettingsPage() {
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle className="flex items-center text-xl">
-            <HomeIcon className="mr-2 h-5 w-5 text-primary" /> {/* Changed icon */}
+            <HomeIcon className="mr-2 h-5 w-5 text-primary" /> 
             Room & Group Management
           </CardTitle>
           <CardDescription>
@@ -69,6 +69,31 @@ export default function SettingsPage() {
           <Button asChild size="lg">
             <Link href="/settings/manage-rooms-groups">
               <Layers3 className="mr-2 h-5 w-5" /> Manage Rooms & Groups
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Separator />
+
+      <Card className="shadow-lg">
+        <CardHeader>
+          <CardTitle className="flex items-center text-xl">
+            <Zap className="mr-2 h-5 w-5 text-primary" />
+            Automation Rules
+          </CardTitle>
+          <CardDescription>
+            Create rules to automate your smart home based on device triggers.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground mb-4">
+            Define automations like "If Living Room Temperature is above 25°C, then turn on Living Room Fan".
+            (Note: A separate backend service is required to execute these rules).
+          </p>
+          <Button asChild size="lg">
+            <Link href="/settings/automations">
+              <Zap className="mr-2 h-5 w-5" /> Manage Automations
             </Link>
           </Button>
         </CardContent>
