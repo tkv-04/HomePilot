@@ -18,14 +18,15 @@ export interface DeviceGroup {
 export interface Routine {
   id: string;
   name: string;
-  phrases: string[]; // Changed from phrase: string
+  phrases: string[];
   actions: RoutineAction[];
-  customVoiceResponse?: string; // Added optional custom voice response
+  customVoiceResponse?: string;
 }
 
 export interface UserPreferences {
   selectedDeviceIds?: string[];
   selectedVoiceURI?: string | null;
+  customWakeWord?: string; // Added custom wake word
   rooms?: Room[];
   deviceGroups?: DeviceGroup[];
   automations?: AutomationRule[];

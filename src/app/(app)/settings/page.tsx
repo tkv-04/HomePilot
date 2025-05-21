@@ -2,10 +2,11 @@
 "use client";
 
 import { VoiceSettings } from '@/components/settings/VoiceSettings';
+import { WakeWordSettings } from '@/components/settings/WakeWordSettings'; // Added import
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { Settings2Icon, ListChecks, HomeIcon, Layers3, Zap, Workflow } from 'lucide-react'; // Added Workflow
+import { Settings2Icon, ListChecks, HomeIcon, Layers3, Zap, Workflow, Radio } from 'lucide-react'; // Added Radio
 import Link from 'next/link';
 
 export default function SettingsPage() {
@@ -20,6 +21,10 @@ export default function SettingsPage() {
           Customize your HomePilot experience.
         </p>
       </header>
+
+      <Separator />
+
+      <WakeWordSettings /> {/* Added WakeWordSettings component */}
 
       <Separator />
 
@@ -87,7 +92,8 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent>
           <p className="text-muted-foreground mb-4">
-            Define routines like "Jarvis, movie time" to dim lights, turn on TV, etc.
+            Define routines like "Movie time" to dim lights, turn on TV, etc.
+            Routines are triggered by saying your configured wake word then the routine phrase.
           </p>
           <Button asChild size="lg">
             <Link href="/settings/routines">

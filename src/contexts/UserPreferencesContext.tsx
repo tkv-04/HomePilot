@@ -14,6 +14,7 @@ interface UserPreferencesContextType {
   preferences: UserPreferences | null;
   updateSelectedDeviceIds: (deviceIds: string[]) => Promise<void>;
   updateSelectedVoiceURI: (voiceURI: string | null) => Promise<void>;
+  updateCustomWakeWord: (wakeWord: string) => Promise<void>; // Added for wake word
   
   rooms: Room[];
   addRoom: (room: Omit<Room, 'id'>) => Promise<void>;
@@ -56,11 +57,12 @@ function cleanUndefinedProps(obj: any): any {
       }
     }
   }
-  // Ensure empty optional string fields are removed rather than stored as "" if that's desired,
-  // or convert them to null if Firestore should store null instead of removing.
-  // For example, if customVoiceResponse is "", remove it:
-  if (newObj.customVoiceResponse === "") {
-    delete newObj.customVoiceResponse;
+  // Specific cleaning for optional fields
+  if (newObj.customVoiceResponse === "") delete newObj.customVoiceResponse;
+  if (newObj.customWakeWord === "") delete newObj.customWakeWord; // Clean wake word if empty
+  
+  if (Array.isArray(newObj.conditions) && newObj.conditions.length === 0) {
+    delete newObj.conditions;
   }
   return newObj;
 }
@@ -110,6 +112,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
         const defaultPrefs: UserPreferences = {
           selectedDeviceIds: [],
           selectedVoiceURI: null,
+          customWakeWord: "jarvis", // Default wake word
           rooms: [],
           deviceGroups: [],
           automations: [],
@@ -143,10 +146,10 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
     }
     const prefDocRef = doc(db, 'userPreferences', userId);
     try {
-      // Ensure currentPreferences is not null before spreading
       const currentPreferences = preferences || { 
         selectedDeviceIds: [], 
         selectedVoiceURI: null, 
+        customWakeWord: "jarvis",
         rooms: [], 
         deviceGroups: [], 
         automations: [], 
@@ -167,6 +170,11 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
 
   const updateSelectedVoiceURI = useCallback(async (voiceURI: string | null) => {
     await updatePreferencesInFirestore({ selectedVoiceURI: voiceURI });
+  }, [updatePreferencesInFirestore]);
+
+  const updateCustomWakeWord = useCallback(async (wakeWord: string) => {
+    const newWakeWord = wakeWord.trim().toLowerCase();
+    await updatePreferencesInFirestore({ customWakeWord: newWakeWord || "jarvis" }); // Default to "jarvis" if empty
   }, [updatePreferencesInFirestore]);
 
   // Room Management
@@ -272,6 +280,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
       preferences,
       updateSelectedDeviceIds,
       updateSelectedVoiceURI,
+      updateCustomWakeWord, // Export new function
       rooms, addRoom, updateRoom, deleteRoom,
       deviceGroups, addDeviceGroup, updateDeviceGroup, deleteDeviceGroup,
       automations, addAutomation, updateAutomation, deleteAutomation, toggleAutomationEnable,
