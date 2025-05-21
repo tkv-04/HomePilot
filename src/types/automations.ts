@@ -9,8 +9,8 @@ export type AutomationConditionOperator =
   | 'greater_than_or_equals'
   | 'less_than_or_equals';
 
-export interface DeviceAutomationTrigger {
-  type: 'device';
+export interface DeviceAutomationTrigger { // This will also serve as the type for individual conditions
+  type: 'device'; // This type property helps if we ever need to differentiate condition types, though currently only device conditions are supported
   deviceId: string;
   // attribute: string; // Future: for specific attributes beyond primary state
   condition: AutomationConditionOperator;
@@ -36,7 +36,8 @@ export interface AutomationAction {
 export interface AutomationRule {
   id: string; // Unique ID for the automation rule
   name: string; // User-defined name for the automation
-  trigger: AutomationTrigger;
+  trigger: AutomationTrigger; // The primary trigger (time or a single device event)
+  conditions?: DeviceAutomationTrigger[]; // Optional: Additional device conditions that must ALL be true
   action: AutomationAction;
   isEnabled: boolean; // To enable/disable the automation without deleting it
   lastTriggered?: string; // ISO string, optional

@@ -3,18 +3,17 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import type { AutomationRule } from '@/types/automations';
+import type { AutomationRule, DeviceAutomationTrigger } from '@/types/automations';
 import type { Device } from '@/types/home-assistant';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { fetchDevicesFromApi } from '@/services/homeAssistantService';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
-import { Dialog, DialogContent } from '@/components/ui/dialog'; // DialogTrigger removed as we manage open state manually
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
-// Label removed as not directly used here
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
-import { PlusCircle, Edit3, Trash2, Zap, Settings2, Clock, AlertCircle } from 'lucide-react'; // Added Clock
+import { PlusCircle, Edit3, Trash2, Zap, Settings2, Clock, AlertCircle, Layers } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { AutomationRuleForm } from './AutomationRuleForm';
 import Link from 'next/link';
@@ -33,7 +32,7 @@ export function ManageAutomationsContent() {
   const [isLoadingApiDevices, setIsLoadingApiDevices] = useState(true);
   const [apiDevicesError, setApiDevicesError] = useState<string | null>(null);
 
-  const [isSaving, setIsSaving] = useState(false); // Used for disabling buttons during async ops
+  const [isSaving, setIsSaving] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [currentRule, setCurrentRule] = useState<AutomationRule | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -124,21 +123,30 @@ export function ManageAutomationsContent() {
   const getDeviceName = (deviceId: string) => {
     return allApiDevices.find(d => d.id === deviceId)?.name || deviceId;
   }
+  
+  const formatConditionValue = (value: string | number | boolean): string => {
+    if (typeof value === 'boolean') return value ? 'ON' : 'OFF';
+    return String(value);
+  };
 
   const formatTrigger = (rule: AutomationRule): string => {
     if (rule.trigger.type === 'device') {
       const triggerDeviceName = getDeviceName(rule.trigger.deviceId);
-      const value = typeof rule.trigger.value === 'boolean' 
-        ? (rule.trigger.value ? 'ON' : 'OFF') 
-        : String(rule.trigger.value);
-      return `IF ${triggerDeviceName} state ${rule.trigger.condition.replace('_', ' ')} ${value}`;
+      return `IF ${triggerDeviceName} state ${rule.trigger.condition.replace('_', ' ')} ${formatConditionValue(rule.trigger.value)}`;
     } else if (rule.trigger.type === 'time') {
       const daysString = rule.trigger.days.length === 7 
         ? 'Every day' 
-        : rule.trigger.days.map(d => dayLabels[d]).join(', ') || 'No days';
+        : rule.trigger.days.map(d => dayLabels[d]).join(', ') || 'No days selected';
       return `AT ${rule.trigger.time} ON ${daysString}`;
     }
     return "Unknown trigger";
+  };
+
+  const formatConditions = (conditions?: DeviceAutomationTrigger[]): string | null => {
+    if (!conditions || conditions.length === 0) return null;
+    return conditions.map(cond => 
+      `AND ${getDeviceName(cond.deviceId)} state ${cond.condition.replace('_', ' ')} ${formatConditionValue(cond.value)}`
+    ).join(' ');
   };
 
   const formatAction = (rule: AutomationRule): string => {
@@ -157,7 +165,7 @@ export function ManageAutomationsContent() {
         </CardHeader>
         <CardContent className="space-y-4">
           {Array.from({ length: 3 }).map((_, index) => (
-            <Skeleton key={index} className="h-20 w-full rounded-md" />
+            <Skeleton key={index} className="h-24 w-full rounded-md" />
           ))}
         </CardContent>
       </Card>
@@ -182,7 +190,8 @@ export function ManageAutomationsContent() {
         <CardHeader>
           <CardTitle className="flex items-center"><Zap className="mr-2 h-6 w-6 text-primary" />Automation Rules</CardTitle>
           <CardDescription>
-            Define rules to automate device actions based on triggers (device states or schedules).
+            Define rules to automate device actions. Primary trigger can be a device state or a schedule. 
+            Optionally, add device conditions that must also be true.
             A separate backend service is required to execute these rules.
           </CardDescription>
         </CardHeader>
@@ -214,13 +223,19 @@ export function ManageAutomationsContent() {
                     <div className="flex justify-between items-start gap-4">
                       <div className="flex-grow min-w-0">
                         <CardTitle className="text-lg truncate" title={rule.name}>{rule.name}</CardTitle>
-                        <CardDescription className="text-xs mt-1">
+                        <CardDescription className="text-xs mt-1 space-y-0.5">
                           <span className={`flex items-center ${rule.trigger.type === 'time' ? 'text-blue-400' : 'text-orange-400'}`}>
                             {rule.trigger.type === 'time' ? <Clock className="mr-1.5 h-3.5 w-3.5" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}
                             {formatTrigger(rule)}
                           </span>
+                          {rule.conditions && rule.conditions.length > 0 && (
+                            <span className="flex items-center text-purple-400">
+                              <Layers className="mr-1.5 h-3.5 w-3.5" /> {/* Icon for conditions */}
+                              {formatConditions(rule.conditions)}
+                            </span>
+                          )}
                           <span className="flex items-center text-green-400">
-                            <Zap className="mr-1.5 h-3.5 w-3.5" /> {/* Using Zap as a generic action icon */}
+                            <Zap className="mr-1.5 h-3.5 w-3.5" /> 
                             {formatAction(rule)}
                           </span>
                         </CardDescription>

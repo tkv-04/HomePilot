@@ -12,8 +12,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from '@/components/ui/dialog';
-import { Save, X, Trash2, AlertTriangle, Clock, Zap } from 'lucide-react';
+import { Save, X, Trash2, AlertTriangle, Clock, Zap, PlusCircle } from 'lucide-react';
 import { ScrollArea } from '../ui/scroll-area';
+import { v4 as uuidv4 } from 'uuid'; // For unique keys for conditions
 
 interface AutomationRuleFormProps {
   rule?: AutomationRule | null;
@@ -32,8 +33,8 @@ const defaultDeviceTrigger: DeviceAutomationTrigger = {
 
 const defaultTimeTrigger: TimeAutomationTrigger = {
   type: 'time',
-  time: '08:00', // Default to 8 AM
-  days: [], // Default to no days selected
+  time: '08:00', 
+  days: [], 
 };
 
 const defaultAction: AutomationAction = {
@@ -67,6 +68,10 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
   const [triggerType, setTriggerType] = useState<'device' | 'time'>('device');
   const [deviceTrigger, setDeviceTrigger] = useState<DeviceAutomationTrigger>({ ...defaultDeviceTrigger });
   const [timeTrigger, setTimeTrigger] = useState<TimeAutomationTrigger>({ ...defaultTimeTrigger });
+  
+  // Conditions state - an array of DeviceAutomationTrigger-like objects, each with a unique UI key
+  const [conditions, setConditions] = useState<(DeviceAutomationTrigger & { uiKey: string })[]>([]);
+
   const [action, setAction] = useState<AutomationAction>({ ...defaultAction });
   const [isEnabled, setIsEnabled] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -79,17 +84,18 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
       setTriggerType(rule.trigger.type);
       if (rule.trigger.type === 'device') {
         setDeviceTrigger(rule.trigger);
-        setTimeTrigger({ ...defaultTimeTrigger }); // Reset other type
+        setTimeTrigger({ ...defaultTimeTrigger }); 
       } else if (rule.trigger.type === 'time') {
         setTimeTrigger(rule.trigger);
-        setDeviceTrigger({ ...defaultDeviceTrigger }); // Reset other type
+        setDeviceTrigger({ ...defaultDeviceTrigger }); 
       }
+      setConditions(rule.conditions?.map(c => ({ ...c, uiKey: uuidv4() })) || []);
     } else {
-      // Reset for new rule
       setName('');
       setTriggerType('device');
       setDeviceTrigger({ ...defaultDeviceTrigger });
       setTimeTrigger({ ...defaultTimeTrigger });
+      setConditions([]);
       setAction({ ...defaultAction });
       setIsEnabled(true);
     }
@@ -104,8 +110,8 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
     return ['greater_than', 'less_than', 'greater_than_or_equals', 'less_than_or_equals'].includes(condition);
   };
 
-  const isBooleanInputExpectedForEquals = (deviceId: string, condition: AutomationConditionOperator): boolean => {
-     if (condition !== 'equals' && condition !== 'not_equals') return false;
+  const isBooleanInputExpectedForEquals = (deviceId: string, conditionOp: AutomationConditionOperator): boolean => {
+     if (conditionOp !== 'equals' && conditionOp !== 'not_equals') return false;
      const deviceType = getDeviceType(deviceId);
      return ['light', 'switch', 'fan', 'outlet'].includes(deviceType);
   };
@@ -119,6 +125,37 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
     });
   };
 
+  const handleAddCondition = () => {
+    setConditions(prev => [...prev, { ...defaultDeviceTrigger, type: 'device', uiKey: uuidv4() }]);
+  };
+
+  const handleRemoveCondition = (uiKeyToRemove: string) => {
+    setConditions(prev => prev.filter(c => c.uiKey !== uiKeyToRemove));
+  };
+
+  const handleConditionChange = (uiKey: string, field: keyof DeviceAutomationTrigger, value: any) => {
+    setConditions(prev => prev.map(c => 
+      c.uiKey === uiKey ? { ...c, [field]: value, ...(field === 'deviceId' && { value: '' }) } : c // Reset value if deviceId changes
+    ));
+  };
+
+  const validateCondition = (cond: DeviceAutomationTrigger): string | null => {
+    if (!cond.deviceId) return "Condition device not selected.";
+    let parsedValue: string | number | boolean = cond.value;
+    if (isBooleanInputExpectedForEquals(cond.deviceId, cond.condition)) {
+        if (String(cond.value).toLowerCase() === 'on' || String(cond.value) === 'true') parsedValue = true;
+        else if (String(cond.value).toLowerCase() === 'off' || String(cond.value) === 'false') parsedValue = false;
+        else return "For 'equals/not_equals' on switchable devices, condition value must be 'on', 'off', 'true', or 'false'.";
+    } else if (isNumericInputExpected(cond.condition)) {
+        const num = parseFloat(String(cond.value));
+        if (isNaN(num)) return "Numeric value required for this condition operator.";
+    } else if (String(cond.value).trim() === '') {
+        return "Condition value cannot be empty."
+    }
+    return null; // No error
+  };
+
+
   const handleSave = async () => {
     if (!name.trim()) {
       alert("Please fill in the Automation Name.");
@@ -126,30 +163,14 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
     }
 
     let finalTrigger: AutomationTrigger;
-
     if (triggerType === 'device') {
-      if (!deviceTrigger.deviceId) {
-        alert("Please select a trigger device.");
-        return;
+      const deviceTriggerError = validateCondition(deviceTrigger);
+      if (deviceTriggerError) {
+          alert(`Primary Trigger Error: ${deviceTriggerError}`);
+          return;
       }
-      let parsedValue: string | number | boolean = deviceTrigger.value;
-      if (isBooleanInputExpectedForEquals(deviceTrigger.deviceId, deviceTrigger.condition)) {
-        if (String(deviceTrigger.value).toLowerCase() === 'on' || String(deviceTrigger.value) === 'true') parsedValue = true;
-        else if (String(deviceTrigger.value).toLowerCase() === 'off' || String(deviceTrigger.value) === 'false') parsedValue = false;
-        else {
-            alert("For 'equals' or 'not_equals' on switchable devices, please use 'on', 'off', 'true', or 'false' for the trigger value.");
-            return;
-        }
-      } else if (isNumericInputExpected(deviceTrigger.condition)) {
-        const num = parseFloat(String(deviceTrigger.value));
-        if (isNaN(num)) {
-            alert("Please enter a numeric value for this condition.");
-            return;
-        }
-        parsedValue = num;
-      }
-      finalTrigger = { ...deviceTrigger, value: parsedValue };
-    } else { // triggerType === 'time'
+      finalTrigger = { ...deviceTrigger, value: parseConditionValue(deviceTrigger.deviceId, deviceTrigger.condition, deviceTrigger.value) };
+    } else { 
       if (!timeTrigger.time) {
         alert("Please set a time for the schedule.");
         return;
@@ -161,15 +182,32 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
       finalTrigger = { ...timeTrigger };
     }
 
+    const finalConditions: DeviceAutomationTrigger[] = [];
+    for (const cond of conditions) {
+        const condError = validateCondition(cond);
+        if (condError) {
+            alert(`Error in Additional Condition for device "${availableDevices.find(d=>d.id === cond.deviceId)?.name || cond.deviceId}": ${condError}`);
+            return;
+        }
+        finalConditions.push({
+            type: 'device',
+            deviceId: cond.deviceId,
+            condition: cond.condition,
+            value: parseConditionValue(cond.deviceId, cond.condition, cond.value)
+        });
+    }
+
+
     if (!action.deviceId) {
       alert("Please select an action device.");
       return;
     }
 
     setIsSaving(true);
-    const ruleDataToSave = {
+    const ruleDataToSave: Omit<AutomationRule, 'id'> = {
       name: name.trim(),
       trigger: finalTrigger,
+      conditions: finalConditions.length > 0 ? finalConditions : undefined, // Only include if there are conditions
       action,
       isEnabled,
     };
@@ -181,14 +219,27 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
     }
     setIsSaving(false);
   };
+  
+  const parseConditionValue = (deviceId: string, conditionOp: AutomationConditionOperator, rawValue: string | number | boolean) => {
+    if (isBooleanInputExpectedForEquals(deviceId, conditionOp)) {
+      return String(rawValue).toLowerCase() === 'on' || String(rawValue).toLowerCase() === 'true';
+    } else if (isNumericInputExpected(conditionOp)) {
+      return parseFloat(String(rawValue));
+    }
+    return String(rawValue);
+  };
 
-  const renderDeviceTriggerValueInput = () => {
-    if (isBooleanInputExpectedForEquals(deviceTrigger.deviceId, deviceTrigger.condition)) {
+
+  const renderDeviceConditionValueInput = (
+    conditionObj: DeviceAutomationTrigger, 
+    onChangeCallback: (field: keyof DeviceAutomationTrigger, value: any) => void
+  ) => {
+    if (isBooleanInputExpectedForEquals(conditionObj.deviceId, conditionObj.condition)) {
       return (
         <Select
-          value={String(deviceTrigger.value).toLowerCase() === 'true' || String(deviceTrigger.value).toLowerCase() === 'on' ? 'on' : 'off'}
-          onValueChange={(val) => setDeviceTrigger(t => ({ ...t, value: val === 'on' }))}
-          disabled={isSaving || !deviceTrigger.deviceId}
+          value={String(conditionObj.value).toLowerCase() === 'true' || String(conditionObj.value).toLowerCase() === 'on' ? 'on' : 'off'}
+          onValueChange={(val) => onChangeCallback('value', val === 'on')}
+          disabled={isSaving || !conditionObj.deviceId}
         >
           <SelectTrigger><SelectValue placeholder="Select state" /></SelectTrigger>
           <SelectContent>
@@ -200,16 +251,17 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
     }
     return (
       <Input
-        placeholder={isNumericInputExpected(deviceTrigger.condition) ? "e.g., 34 or 22.5" : "e.g., open or on"}
-        value={String(deviceTrigger.value)}
-        type={isNumericInputExpected(deviceTrigger.condition) ? "number" : "text"}
-        step={isNumericInputExpected(deviceTrigger.condition) ? "any" : undefined}
-        onChange={(e) => setDeviceTrigger(t => ({ ...t, value: e.target.value }))}
-        disabled={isSaving || !deviceTrigger.deviceId}
+        placeholder={isNumericInputExpected(conditionObj.condition) ? "e.g., 34 or 22.5" : "e.g., open or on"}
+        value={String(conditionObj.value)}
+        type={isNumericInputExpected(conditionObj.condition) ? "number" : "text"}
+        step={isNumericInputExpected(conditionObj.condition) ? "any" : undefined}
+        onChange={(e) => onChangeCallback('value', e.target.value)}
+        disabled={isSaving || !conditionObj.deviceId}
         className="bg-input/50"
       />
     );
   };
+
 
   if (availableDevices.length === 0) {
     return (
@@ -224,18 +276,27 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
       </div>
     );
   }
+  
+  const primaryTriggerValid = 
+    triggerType === 'device' ? deviceTrigger.deviceId && String(deviceTrigger.value).trim() !== '' :
+    triggerType === 'time' ? timeTrigger.time && timeTrigger.days.length > 0 : false;
+
+  const allConditionsValid = conditions.every(c => c.deviceId && String(c.value).trim() !== '');
+  const actionValid = action.deviceId;
+
 
   return (
     <>
       <DialogHeader>
         <DialogTitle>{isEditing ? 'Edit Automation Rule' : 'Create New Automation Rule'}</DialogTitle>
         <DialogDescription>
-          Define a trigger (either device state or scheduled time) and an action for your smart home automation.
+          Define a primary trigger (device state or time). Optionally add device conditions (all must be true). Then define an action.
           A separate backend service is required to execute these rules.
         </DialogDescription>
       </DialogHeader>
       <ScrollArea className="max-h-[70vh] p-1 -mx-1">
         <div className="space-y-6 p-4 pr-6">
+          {/* Automation Name & Enabled Switch */}
           <div>
             <Label htmlFor="automation-name" className="text-base font-medium">Automation Name</Label>
             <Input
@@ -247,32 +308,19 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
               className="mt-1 bg-input/50"
             />
           </div>
-
           <div className="space-y-1">
             <Label className="text-base font-medium">Enabled</Label>
             <div className="flex items-center space-x-2 mt-1">
-              <Switch
-                id="automation-enabled"
-                checked={isEnabled}
-                onCheckedChange={setIsEnabled}
-                disabled={isSaving}
-              />
-              <Label htmlFor="automation-enabled" className="text-sm">
-                {isEnabled ? 'Automation is ON' : 'Automation is OFF'}
-              </Label>
+              <Switch id="automation-enabled" checked={isEnabled} onCheckedChange={setIsEnabled} disabled={isSaving} />
+              <Label htmlFor="automation-enabled" className="text-sm">{isEnabled ? 'Automation is ON' : 'Automation is OFF'}</Label>
             </div>
           </div>
 
+          {/* Primary Trigger Selection */}
           <div>
-            <Label htmlFor="trigger-type" className="text-base font-medium">Trigger Type</Label>
-            <Select
-              value={triggerType}
-              onValueChange={(val: 'device' | 'time') => setTriggerType(val)}
-              disabled={isSaving}
-            >
-              <SelectTrigger id="trigger-type" className="mt-1 bg-input/50">
-                <SelectValue placeholder="Select trigger type" />
-              </SelectTrigger>
+            <Label htmlFor="trigger-type" className="text-base font-medium">Primary Trigger Type</Label>
+            <Select value={triggerType} onValueChange={(val: 'device' | 'time') => setTriggerType(val)} disabled={isSaving}>
+              <SelectTrigger id="trigger-type" className="mt-1 bg-input/50"><SelectValue placeholder="Select trigger type" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="device"><Zap className="mr-2 h-4 w-4 inline-block" /> Device State</SelectItem>
                 <SelectItem value="time"><Clock className="mr-2 h-4 w-4 inline-block" /> Scheduled Time</SelectItem>
@@ -280,17 +328,14 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
             </Select>
           </div>
           
+          {/* Device State Primary Trigger */}
           {triggerType === 'device' && (
             <fieldset className="border p-4 rounded-md shadow-sm bg-card/30">
               <legend className="text-lg font-semibold px-2 text-primary flex items-center"><Zap className="mr-2 h-5 w-5"/>Device State Trigger (IF...)</legend>
               <div className="space-y-4 mt-2">
                 <div>
                   <Label htmlFor="trigger-device">Device</Label>
-                  <Select
-                    value={deviceTrigger.deviceId}
-                    onValueChange={(val) => setDeviceTrigger(t => ({ ...t, deviceId: val, value: '' }))}
-                    disabled={isSaving}
-                  >
+                  <Select value={deviceTrigger.deviceId} onValueChange={(val) => setDeviceTrigger(t => ({ ...t, deviceId: val, value: '' }))} disabled={isSaving}>
                     <SelectTrigger id="trigger-device" className="bg-input/50"><SelectValue placeholder="Select trigger device" /></SelectTrigger>
                     <SelectContent>
                       {availableDevices.map(d => <SelectItem key={d.id} value={d.id}>{d.name} ({d.type})</SelectItem>)}
@@ -298,104 +343,105 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
                   </Select>
                 </div>
                 {deviceTrigger.deviceId && (
-                  <>
-                    <div>
-                      <Label>Condition: <span className="text-muted-foreground text-xs">(Device State...)</span></Label>
-                      <div className="grid grid-cols-2 gap-2 items-end">
-                        <Select
-                          value={deviceTrigger.condition}
-                          onValueChange={(val) => setDeviceTrigger(t => ({ ...t, condition: val as AutomationConditionOperator }))}
-                          disabled={isSaving}
-                        >
-                          <SelectTrigger className="bg-input/50"><SelectValue placeholder="Select condition" /></SelectTrigger>
-                          <SelectContent>
-                            {conditionOperators.map(op => <SelectItem key={op.value} value={op.value}>{op.label}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                        {renderDeviceTriggerValueInput()}
-                      </div>
-                       <p className="text-xs text-muted-foreground mt-1">
-                          For lights/switches, use 'on'/'off' or 'true'/'false'. For sensors, enter the numeric value.
-                       </p>
+                  <div>
+                    <Label>Condition: <span className="text-muted-foreground text-xs">(Device State...)</span></Label>
+                    <div className="grid grid-cols-2 gap-2 items-end">
+                      <Select value={deviceTrigger.condition} onValueChange={(val) => setDeviceTrigger(t => ({ ...t, condition: val as AutomationConditionOperator }))} disabled={isSaving}>
+                        <SelectTrigger className="bg-input/50"><SelectValue placeholder="Select condition" /></SelectTrigger>
+                        <SelectContent>{conditionOperators.map(op => <SelectItem key={op.value} value={op.value}>{op.label}</SelectItem>)}</SelectContent>
+                      </Select>
+                      {renderDeviceConditionValueInput(deviceTrigger, (field, val) => setDeviceTrigger(t => ({ ...t, [field]: val })))}
                     </div>
-                  </>
+                    <p className="text-xs text-muted-foreground mt-1">For lights/switches, use 'on'/'off' or 'true'/'false'. For sensors, enter value.</p>
+                  </div>
                 )}
               </div>
             </fieldset>
           )}
 
+          {/* Time Primary Trigger */}
           {triggerType === 'time' && (
              <fieldset className="border p-4 rounded-md shadow-sm bg-card/30">
               <legend className="text-lg font-semibold px-2 text-primary flex items-center"><Clock className="mr-2 h-5 w-5"/>Scheduled Time Trigger (AT...)</legend>
               <div className="space-y-4 mt-2">
                 <div>
                   <Label htmlFor="trigger-time">Time (HH:mm)</Label>
-                  <Input
-                    id="trigger-time"
-                    type="time"
-                    value={timeTrigger.time}
-                    onChange={(e) => setTimeTrigger(t => ({ ...t, time: e.target.value }))}
-                    disabled={isSaving}
-                    className="bg-input/50"
-                  />
+                  <Input id="trigger-time" type="time" value={timeTrigger.time} onChange={(e) => setTimeTrigger(t => ({ ...t, time: e.target.value }))} disabled={isSaving} className="bg-input/50"/>
                 </div>
                 <div>
                   <Label>Days of the Week</Label>
                   <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mt-1">
                     {daysOfWeek.map(day => (
                       <div key={day.id} className="flex items-center space-x-2">
-                        <Checkbox
-                          id={`day-${day.id}`}
-                          checked={timeTrigger.days.includes(day.id)}
-                          onCheckedChange={() => handleDayToggle(day.id)}
-                          disabled={isSaving}
-                        />
+                        <Checkbox id={`day-${day.id}`} checked={timeTrigger.days.includes(day.id)} onCheckedChange={() => handleDayToggle(day.id)} disabled={isSaving}/>
                         <Label htmlFor={`day-${day.id}`} className="text-sm font-normal">{day.label}</Label>
                       </div>
                     ))}
                   </div>
-                   <p className="text-xs text-muted-foreground mt-1">
-                      Select at least one day.
-                   </p>
+                  <p className="text-xs text-muted-foreground mt-1">Select at least one day.</p>
                 </div>
               </div>
             </fieldset>
           )}
 
+          {/* Additional Conditions Section */}
+           <fieldset className="border p-4 rounded-md shadow-sm bg-card/30">
+            <legend className="text-lg font-semibold px-2 text-primary flex items-center">Additional Conditions (AND ALL MUST BE TRUE)</legend>
+            <div className="space-y-4 mt-2">
+              {conditions.map((cond, index) => (
+                <div key={cond.uiKey} className="p-3 border rounded-md bg-muted/20 relative">
+                  <p className="text-sm font-medium mb-2">Condition {index + 1}</p>
+                   <Button variant="ghost" size="icon" className="absolute top-1 right-1 h-7 w-7" onClick={() => handleRemoveCondition(cond.uiKey)} disabled={isSaving}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                  <div className="space-y-3">
+                    <div>
+                      <Label htmlFor={`condition-device-${cond.uiKey}`}>Device</Label>
+                      <Select value={cond.deviceId} onValueChange={(val) => handleConditionChange(cond.uiKey, 'deviceId', val)} disabled={isSaving}>
+                        <SelectTrigger id={`condition-device-${cond.uiKey}`} className="bg-input/50"><SelectValue placeholder="Select condition device" /></SelectTrigger>
+                        <SelectContent>{availableDevices.map(d => <SelectItem key={d.id} value={d.id}>{d.name} ({d.type})</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    {cond.deviceId && (
+                      <div>
+                        <Label>State Condition:</Label>
+                        <div className="grid grid-cols-2 gap-2 items-end">
+                          <Select value={cond.condition} onValueChange={(val) => handleConditionChange(cond.uiKey, 'condition', val as AutomationConditionOperator)} disabled={isSaving}>
+                            <SelectTrigger className="bg-input/50"><SelectValue placeholder="Select operator" /></SelectTrigger>
+                            <SelectContent>{conditionOperators.map(op => <SelectItem key={op.value} value={op.value}>{op.label}</SelectItem>)}</SelectContent>
+                          </Select>
+                          {renderDeviceConditionValueInput(cond, (field, val) => handleConditionChange(cond.uiKey, field, val))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <Button type="button" variant="outline" onClick={handleAddCondition} disabled={isSaving}>
+                <PlusCircle className="mr-2 h-4 w-4" /> Add Condition
+              </Button>
+            </div>
+          </fieldset>
+
+          {/* Action Section */}
           <fieldset className="border p-4 rounded-md shadow-sm bg-card/30">
             <legend className="text-lg font-semibold px-2 text-primary">Action (THEN...)</legend>
             <div className="space-y-4 mt-2">
               <div>
                 <Label htmlFor="action-device">Device</Label>
-                <Select
-                  value={action.deviceId}
-                  onValueChange={(val) => setAction(a => ({ ...a, deviceId: val }))}
-                  disabled={isSaving}
-                >
+                <Select value={action.deviceId} onValueChange={(val) => setAction(a => ({ ...a, deviceId: val }))} disabled={isSaving}>
                   <SelectTrigger id="action-device" className="bg-input/50"><SelectValue placeholder="Select action device" /></SelectTrigger>
                   <SelectContent>
-                    {availableDevices.map(d => {
-                       // Only allow controllable devices for actions
-                       if (['light', 'switch', 'fan', 'outlet'].includes(d.type)) {
-                         return <SelectItem key={d.id} value={d.id}>{d.name} ({d.type})</SelectItem>;
-                       }
-                       return null;
-                    })}
+                    {availableDevices.filter(d => ['light', 'switch', 'fan', 'outlet'].includes(d.type)).map(d => <SelectItem key={d.id} value={d.id}>{d.name} ({d.type})</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               {action.deviceId && (
                 <div>
                   <Label htmlFor="action-command">Command</Label>
-                  <Select
-                    value={action.command}
-                    onValueChange={(val) => setAction(a => ({ ...a, command: val as AutomationActionCommand }))}
-                    disabled={isSaving}
-                  >
+                  <Select value={action.command} onValueChange={(val) => setAction(a => ({ ...a, command: val as AutomationActionCommand }))} disabled={isSaving}>
                     <SelectTrigger id="action-command" className="bg-input/50"><SelectValue placeholder="Select command" /></SelectTrigger>
-                    <SelectContent>
-                      {actionCommands.map(cmd => <SelectItem key={cmd.value} value={cmd.value}>{cmd.label}</SelectItem>)}
-                    </SelectContent>
+                    <SelectContent>{actionCommands.map(cmd => <SelectItem key={cmd.value} value={cmd.value}>{cmd.label}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
               )}
@@ -404,16 +450,8 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
         </div>
       </ScrollArea>
       <DialogFooter className="mt-6 pt-4 border-t">
-        <DialogClose asChild>
-          <Button type="button" variant="outline" onClick={onCancel} disabled={isSaving}>
-            <X className="mr-2 h-4 w-4" /> Cancel
-          </Button>
-        </DialogClose>
-        <Button 
-            type="submit" 
-            onClick={handleSave} 
-            disabled={isSaving || !name.trim() || (triggerType === 'device' && !deviceTrigger.deviceId) || (triggerType === 'time' && (!timeTrigger.time || timeTrigger.days.length === 0)) || !action.deviceId }
-        >
+        <DialogClose asChild><Button type="button" variant="outline" onClick={onCancel} disabled={isSaving}><X className="mr-2 h-4 w-4" /> Cancel</Button></DialogClose>
+        <Button type="submit" onClick={handleSave} disabled={isSaving || !name.trim() || !primaryTriggerValid || !allConditionsValid || !actionValid}>
           {isSaving ? <Save className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
           {isEditing ? 'Save Changes' : 'Create Automation'}
         </Button>
