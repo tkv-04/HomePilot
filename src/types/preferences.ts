@@ -1,7 +1,6 @@
 // src/types/preferences.ts
-import type { AutomationRule, AutomationAction } from './automations'; // Keep AutomationAction if it's identical or re-export
+import type { AutomationRule, AutomationAction } from './automations';
 
-// Re-export or define RoutineAction if it's the same as AutomationAction
 export type RoutineAction = AutomationAction;
 
 export interface Room {
@@ -18,9 +17,10 @@ export interface DeviceGroup {
 
 export interface Routine {
   id: string;
-  name: string; // e.g., "Good Morning Scene"
-  phrase: string; // The exact phrase to trigger it, e.g., "good morning"
+  name: string;
+  phrases: string[]; // Changed from phrase: string
   actions: RoutineAction[];
+  customVoiceResponse?: string; // Added optional custom voice response
 }
 
 export interface UserPreferences {
@@ -29,5 +29,5 @@ export interface UserPreferences {
   rooms?: Room[];
   deviceGroups?: DeviceGroup[];
   automations?: AutomationRule[];
-  routines?: Routine[]; // Added routines
+  routines?: Routine[];
 }

@@ -11,10 +11,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
-import { PlusCircle, Edit3, Trash2, Workflow, Settings2, AlertCircle, Sparkles, ChevronRight } from 'lucide-react';
+import { PlusCircle, Edit3, Trash2, Workflow, Settings2, AlertCircle, Sparkles, ChevronRight, MessageSquare } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { RoutineForm } from './RoutineForm';
 import Link from 'next/link';
+import { Badge } from '@/components/ui/badge';
 
 export function ManageRoutinesContent() {
   const {
@@ -28,7 +29,7 @@ export function ManageRoutinesContent() {
   const [isLoadingApiDevices, setIsLoadingApiDevices] = useState(true);
   const [apiDevicesError, setApiDevicesError] = useState<string | null>(null);
 
-  const [isSaving, setIsSaving] = useState(false); // Used by parent for dialog save, etc.
+  const [isSaving, setIsSaving] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [currentRoutine, setCurrentRoutine] = useState<Routine | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -93,7 +94,7 @@ export function ManageRoutinesContent() {
 
   const handleDeleteRoutine = async (routineId: string, routineName: string) => {
     if (!confirm(`Are you sure you want to delete the routine "${routineName}"?`)) return;
-    setIsSaving(true); // Consider a specific isDeleting state if needed
+    setIsSaving(true);
     try {
       await deleteRoutine(routineId);
       toast({ title: "Routine Deleted", description: `Routine "${routineName}" has been deleted.` });
@@ -125,7 +126,7 @@ export function ManageRoutinesContent() {
         </CardHeader>
         <CardContent className="space-y-4">
           {Array.from({ length: 2 }).map((_, index) => (
-            <Skeleton key={index} className="h-28 w-full rounded-md" />
+            <Skeleton key={index} className="h-32 w-full rounded-md" />
           ))}
         </CardContent>
       </Card>
@@ -150,8 +151,8 @@ export function ManageRoutinesContent() {
         <CardHeader>
           <CardTitle className="flex items-center"><Sparkles className="mr-2 h-6 w-6 text-primary" />Custom Voice Routines</CardTitle>
           <CardDescription>
-            Define custom voice phrases (e.g., "movie time") to trigger a sequence of actions.
-            These phrases are recognized after you say "Jarvis".
+            Define custom voice phrases to trigger sequences of actions. Add an optional custom voice response after execution.
+            Phrases are recognized after saying "Jarvis".
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -184,9 +185,19 @@ export function ManageRoutinesContent() {
                           <Workflow className="mr-2 h-5 w-5 text-muted-foreground" />
                           {routine.name}
                         </CardTitle>
-                        <CardDescription className="text-sm mt-1">
-                          Trigger phrase: <span className="font-semibold text-accent">"{routine.phrase}"</span>
-                        </CardDescription>
+                        <div className="text-sm mt-1 space-y-0.5">
+                            <p className="text-muted-foreground">Trigger Phrases:</p>
+                            <div className="flex flex-wrap gap-1">
+                                {routine.phrases.map((phrase, idx) => (
+                                    <Badge key={idx} variant="secondary" className="text-xs">"{phrase}"</Badge>
+                                ))}
+                            </div>
+                        </div>
+                         {routine.customVoiceResponse && (
+                            <p className="text-xs text-muted-foreground mt-1 flex items-center">
+                                <MessageSquare className="h-3 w-3 mr-1 text-accent"/> Custom Response: <span className="italic ml-1">"{routine.customVoiceResponse}"</span>
+                            </p>
+                        )}
                       </div>
                       <div className="space-x-2 flex-shrink-0">
                         <Button variant="outline" size="sm" onClick={() => handleOpenDialog(routine)} disabled={isSaving || noDevicesOnDashboard}>
@@ -206,6 +217,7 @@ export function ManageRoutinesContent() {
                           <ChevronRight className="h-3 w-3 mr-1 text-primary"/> {formatAction(action)}
                         </li>
                       ))}
+                      {routine.actions.length === 0 && <li className="text-xs text-muted-foreground">No actions defined.</li>}
                     </ul>
                   </CardContent>
                 </Card>
@@ -226,7 +238,7 @@ export function ManageRoutinesContent() {
           <RoutineForm
             key={currentRoutine?.id || 'new-routine-form'} 
             routine={currentRoutine}
-            availableDevices={dashboardSelectedDevices} // Pass only dashboard-selected devices
+            availableDevices={dashboardSelectedDevices}
             onSave={handleSaveRoutine}
             onCancel={() => setDialogOpen(false)}
             isEditing={isEditing}

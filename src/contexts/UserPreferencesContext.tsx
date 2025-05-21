@@ -46,17 +46,21 @@ function cleanUndefinedProps(obj: any): any {
   if (typeof obj !== 'object' || obj === null) {
     return obj;
   }
-  const newObj: any = { ...obj }; // Use 'any' for newObj to allow dynamic key deletion
-  for (const key in newObj) {
-    if (newObj[key] === undefined) {
-      delete newObj[key];
-    } else if (Array.isArray(newObj[key])) {
-      // Recursively clean arrays of objects
-      newObj[key] = newObj[key].map((item: any) => typeof item === 'object' ? cleanUndefinedProps(item) : item);
-    } else if (typeof newObj[key] === 'object') {
-      // Recursively clean nested objects
-      newObj[key] = cleanUndefinedProps(newObj[key]);
+  const newObj: any = Array.isArray(obj) ? [] : {};
+  for (const key in obj) {
+    if (obj[key] !== undefined) {
+      if (typeof obj[key] === 'object' && obj[key] !== null) {
+        newObj[key] = cleanUndefinedProps(obj[key]);
+      } else {
+        newObj[key] = obj[key];
+      }
     }
+  }
+  // Ensure empty optional string fields are removed rather than stored as "" if that's desired,
+  // or convert them to null if Firestore should store null instead of removing.
+  // For example, if customVoiceResponse is "", remove it:
+  if (newObj.customVoiceResponse === "") {
+    delete newObj.customVoiceResponse;
   }
   return newObj;
 }
@@ -68,7 +72,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
   const [rooms, setRooms] = useState<Room[]>([]);
   const [deviceGroups, setDeviceGroups] = useState<DeviceGroup[]>([]);
   const [automations, setAutomations] = useState<AutomationRule[]>([]);
-  const [routines, setRoutines] = useState<Routine[]>([]); // Added routines state
+  const [routines, setRoutines] = useState<Routine[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -85,7 +89,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
       setRooms([]);
       setDeviceGroups([]);
       setAutomations([]);
-      setRoutines([]); // Clear routines if no user
+      setRoutines([]);
       setIsLoading(false);
       return;
     }
@@ -101,7 +105,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
         setRooms(data.rooms || []);
         setDeviceGroups(data.deviceGroups || []);
         setAutomations(data.automations?.map(cleanUndefinedProps) || []);
-        setRoutines(data.routines?.map(cleanUndefinedProps) || []); // Load routines
+        setRoutines(data.routines?.map(cleanUndefinedProps) || []);
       } else {
         const defaultPrefs: UserPreferences = {
           selectedDeviceIds: [],
@@ -109,7 +113,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
           rooms: [],
           deviceGroups: [],
           automations: [],
-          routines: [], // Default routines
+          routines: [],
         };
         setPreferences(defaultPrefs);
         setRooms([]);
@@ -139,8 +143,17 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
     }
     const prefDocRef = doc(db, 'userPreferences', userId);
     try {
-      const prefsToSave = cleanUndefinedProps({ ...preferences, ...newPrefs });
-      await setDoc(prefDocRef, prefsToSave, { merge: true }); // Merge to update, create if not exists
+      // Ensure currentPreferences is not null before spreading
+      const currentPreferences = preferences || { 
+        selectedDeviceIds: [], 
+        selectedVoiceURI: null, 
+        rooms: [], 
+        deviceGroups: [], 
+        automations: [], 
+        routines: [] 
+      };
+      const prefsToSave = cleanUndefinedProps({ ...currentPreferences, ...newPrefs });
+      await setDoc(prefDocRef, prefsToSave, { merge: true });
     } catch (err: any) {
       console.error("Error updating user preferences in Firestore:", err);
       setError(err);
@@ -233,7 +246,8 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
   const addRoutine = useCallback(async (routineData: Omit<Routine, 'id'>) => {
     if (!userId) throw new Error("User not authenticated.");
     const newId = uuidv4();
-    const newRoutine = cleanUndefinedProps({ ...routineData, id: newId }) as Routine;
+    const newRoutineData = { ...routineData, customVoiceResponse: routineData.customVoiceResponse || undefined };
+    const newRoutine = cleanUndefinedProps({ ...newRoutineData, id: newId }) as Routine;
     const newRoutines = [...routines, newRoutine];
     await updatePreferencesInFirestore({ routines: newRoutines });
   }, [userId, routines, updatePreferencesInFirestore]);
@@ -241,7 +255,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
   const updateRoutine = useCallback(async (routineId: string, updatedRoutineData: Partial<Omit<Routine, 'id'>>) => {
     if (!userId) throw new Error("User not authenticated.");
     const newRoutines = routines.map(r =>
-      r.id === routineId ? cleanUndefinedProps({ ...r, ...updatedRoutineData }) as Routine : r
+      r.id === routineId ? cleanUndefinedProps({ ...r, ...updatedRoutineData, customVoiceResponse: updatedRoutineData.customVoiceResponse || undefined }) as Routine : r
     );
     await updatePreferencesInFirestore({ routines: newRoutines });
   }, [userId, routines, updatePreferencesInFirestore]);
@@ -261,7 +275,7 @@ export const UserPreferencesProvider = ({ children }: { children: ReactNode }) =
       rooms, addRoom, updateRoom, deleteRoom,
       deviceGroups, addDeviceGroup, updateDeviceGroup, deleteDeviceGroup,
       automations, addAutomation, updateAutomation, deleteAutomation, toggleAutomationEnable,
-      routines, addRoutine, updateRoutine, deleteRoutine, // Added routines
+      routines, addRoutine, updateRoutine, deleteRoutine,
       isLoading,
       error
     }}>
