@@ -9,21 +9,22 @@ import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { fetchDevicesFromApi } from '@/services/homeAssistantService';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent } from '@/components/ui/dialog'; // DialogTrigger removed as we manage open state manually
 import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
+// Label removed as not directly used here
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
-import { PlusCircle, Edit3, Trash2, Zap, Play, Pause, AlertCircle, Settings2 } from 'lucide-react';
+import { PlusCircle, Edit3, Trash2, Zap, Settings2, Clock, AlertCircle } from 'lucide-react'; // Added Clock
 import { useToast } from '@/hooks/use-toast';
 import { AutomationRuleForm } from './AutomationRuleForm';
 import Link from 'next/link';
 
+const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export function ManageAutomationsContent() {
   const {
     automations, addAutomation, updateAutomation, deleteAutomation, toggleAutomationEnable,
-    preferences, // To get selectedDeviceIds
+    preferences, 
     isLoading: isLoadingPreferences, error: preferencesError
   } = useUserPreferences();
   const { toast } = useToast();
@@ -32,12 +33,11 @@ export function ManageAutomationsContent() {
   const [isLoadingApiDevices, setIsLoadingApiDevices] = useState(true);
   const [apiDevicesError, setApiDevicesError] = useState<string | null>(null);
 
-  const [isSaving, setIsSaving] = useState(false);
+  const [isSaving, setIsSaving] = useState(false); // Used for disabling buttons during async ops
   const [dialogOpen, setDialogOpen] = useState(false);
   const [currentRule, setCurrentRule] = useState<AutomationRule | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   
-  // Filter available devices based on dashboard selection
   const dashboardSelectedDevices = allApiDevices.filter(
     d => preferences?.selectedDeviceIds?.includes(d.id)
   );
@@ -60,6 +60,14 @@ export function ManageAutomationsContent() {
   }, [toast]);
 
   const handleOpenDialog = (rule?: AutomationRule) => {
+    if (dashboardSelectedDevices.length === 0 && !isLoadingApiDevices && !isLoadingPreferences) {
+      toast({
+        title: "No Dashboard Devices",
+        description: "Please select devices for your dashboard first. Automations use dashboard devices.",
+        variant: "default"
+      });
+      return;
+    }
     if (rule) {
       setCurrentRule(rule);
       setIsEditing(true);
@@ -73,10 +81,10 @@ export function ManageAutomationsContent() {
   const handleSaveAutomation = async (data: Omit<AutomationRule, 'id'> | AutomationRule) => {
     setIsSaving(true);
     try {
-      if ('id' in data) { // Existing rule
+      if ('id' in data) { 
         await updateAutomation(data.id, data);
         toast({ title: "Automation Updated", description: `Rule "${data.name}" has been updated.` });
-      } else { // New rule
+      } else { 
         await addAutomation(data);
         toast({ title: "Automation Added", description: `New rule "${data.name}" has been created.` });
       }
@@ -94,7 +102,7 @@ export function ManageAutomationsContent() {
     try {
       await deleteAutomation(ruleId);
       toast({ title: "Automation Deleted", description: `Rule "${ruleName}" has been deleted.` });
-    } catch (err: any) {
+    } catch (err: any)      {
       toast({ title: "Delete Failed", description: err.message || "Could not delete automation.", variant: "destructive" });
     } finally {
       setIsSaving(false);
@@ -116,6 +124,27 @@ export function ManageAutomationsContent() {
   const getDeviceName = (deviceId: string) => {
     return allApiDevices.find(d => d.id === deviceId)?.name || deviceId;
   }
+
+  const formatTrigger = (rule: AutomationRule): string => {
+    if (rule.trigger.type === 'device') {
+      const triggerDeviceName = getDeviceName(rule.trigger.deviceId);
+      const value = typeof rule.trigger.value === 'boolean' 
+        ? (rule.trigger.value ? 'ON' : 'OFF') 
+        : String(rule.trigger.value);
+      return `IF ${triggerDeviceName} state ${rule.trigger.condition.replace('_', ' ')} ${value}`;
+    } else if (rule.trigger.type === 'time') {
+      const daysString = rule.trigger.days.length === 7 
+        ? 'Every day' 
+        : rule.trigger.days.map(d => dayLabels[d]).join(', ') || 'No days';
+      return `AT ${rule.trigger.time} ON ${daysString}`;
+    }
+    return "Unknown trigger";
+  };
+
+  const formatAction = (rule: AutomationRule): string => {
+    const actionDeviceName = getDeviceName(rule.action.deviceId);
+    return `THEN ${rule.action.command.replace('_', ' ')} ${actionDeviceName}`;
+  };
 
   const isLoading = isLoadingPreferences || isLoadingApiDevices;
 
@@ -147,15 +176,14 @@ export function ManageAutomationsContent() {
   
   const noDevicesOnDashboard = !preferences?.selectedDeviceIds || preferences.selectedDeviceIds.length === 0;
 
-
   return (
     <>
       <Card className="shadow-xl">
         <CardHeader>
           <CardTitle className="flex items-center"><Zap className="mr-2 h-6 w-6 text-primary" />Automation Rules</CardTitle>
           <CardDescription>
-            Define rules to automate device actions based on triggers.
-            These rules will be processed by a separate backend service (to be implemented by you).
+            Define rules to automate device actions based on triggers (device states or schedules).
+            A separate backend service is required to execute these rules.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -165,9 +193,9 @@ export function ManageAutomationsContent() {
               <AlertTitle className="text-primary">Setup Dashboard Devices First</AlertTitle>
               <AlertDescription>
                 To create automations, you first need to select which devices are available on your dashboard.
-                This allows you to pick trigger and action devices for your rules.
+                Automations can only use devices that are selected for the dashboard.
                 <br />
-                <Button asChild variant="link" className="p-0 h-auto mt-1">
+                <Button asChild variant="link" className="p-0 h-auto mt-1 text-base">
                   <Link href="/manage-devices">Go to Manage Dashboard Devices</Link>
                 </Button>
               </AlertDescription>
@@ -181,15 +209,20 @@ export function ManageAutomationsContent() {
           ) : (
             <div className="space-y-3">
               {automations.map(rule => (
-                <Card key={rule.id} className={`shadow-sm hover:shadow-md transition-shadow ${!rule.isEnabled ? 'opacity-60 bg-muted/30' : ''}`}>
+                <Card key={rule.id} className={`shadow-sm hover:shadow-md transition-shadow ${!rule.isEnabled ? 'opacity-70 bg-muted/20' : 'bg-card'}`}>
                   <CardHeader className="pb-3 pt-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <CardTitle className="text-lg">{rule.name}</CardTitle>
-                        <CardDescription className="text-xs">
-                          IF <span className="font-semibold text-accent">{getDeviceName(rule.trigger.deviceId)}</span> state {rule.trigger.condition.replace('_', ' ')} <span className="font-semibold text-accent">{String(rule.trigger.value)}</span>
-                          <br />
-                          THEN <span className="font-semibold text-accent">{rule.action.command.replace('_', ' ')}</span> <span className="font-semibold text-accent">{getDeviceName(rule.action.deviceId)}</span>
+                    <div className="flex justify-between items-start gap-4">
+                      <div className="flex-grow min-w-0">
+                        <CardTitle className="text-lg truncate" title={rule.name}>{rule.name}</CardTitle>
+                        <CardDescription className="text-xs mt-1">
+                          <span className={`flex items-center ${rule.trigger.type === 'time' ? 'text-blue-400' : 'text-orange-400'}`}>
+                            {rule.trigger.type === 'time' ? <Clock className="mr-1.5 h-3.5 w-3.5" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}
+                            {formatTrigger(rule)}
+                          </span>
+                          <span className="flex items-center text-green-400">
+                            <Zap className="mr-1.5 h-3.5 w-3.5" /> {/* Using Zap as a generic action icon */}
+                            {formatAction(rule)}
+                          </span>
                         </CardDescription>
                       </div>
                       <div className="flex items-center space-x-2 flex-shrink-0">
@@ -215,16 +248,17 @@ export function ManageAutomationsContent() {
           )}
         </CardContent>
         <CardFooter>
-          <Button onClick={() => handleOpenDialog()} disabled={isSaving || noDevicesOnDashboard}>
+          <Button onClick={() => handleOpenDialog()} disabled={isSaving || (noDevicesOnDashboard && !isLoadingApiDevices && !isLoadingPreferences) }>
             <PlusCircle className="mr-2 h-5 w-5" /> Add New Automation
           </Button>
+           {noDevicesOnDashboard && <p className="ml-4 text-sm text-muted-foreground">Add devices to dashboard to enable automation creation.</p>}
         </CardFooter>
       </Card>
 
       <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) setCurrentRule(null); setDialogOpen(open); }}>
         <DialogContent className="sm:max-w-2xl">
           <AutomationRuleForm
-            key={currentRule?.id || 'new'} // Force re-render if rule changes
+            key={currentRule?.id || 'new-rule-form'} 
             rule={currentRule}
             availableDevices={dashboardSelectedDevices}
             onSave={handleSaveAutomation}
