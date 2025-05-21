@@ -9,36 +9,50 @@ export type AutomationConditionOperator =
   | 'greater_than_or_equals'
   | 'less_than_or_equals';
 
-export interface DeviceAutomationTrigger { // This will also serve as the type for individual conditions
-  type: 'device'; // This type property helps if we ever need to differentiate condition types, though currently only device conditions are supported
+export interface DeviceAutomationTrigger {
+  type: 'device';
   deviceId: string;
-  // attribute: string; // Future: for specific attributes beyond primary state
   condition: AutomationConditionOperator;
-  value: string | number | boolean; // The value to compare against
+  value: string | number | boolean;
 }
 
-export interface TimeAutomationTrigger {
+// Base for time triggers
+interface TimeAutomationTriggerBase {
   type: 'time';
   time: string; // HH:mm format, e.g., "08:00"
-  days: number[]; // Array of day numbers: 0 (Sun) - 6 (Sat)
 }
+
+// For recurring schedules (days of the week)
+export interface RecurringTimeAutomationTrigger extends TimeAutomationTriggerBase {
+  scheduleType: 'recurring';
+  days: number[]; // Array of day numbers: 0 (Sun) - 6 (Sat)
+  specificDate?: never; // Ensures specificDate is not present for this type
+}
+
+// For schedules on a specific date
+export interface SpecificDateAutomationTrigger extends TimeAutomationTriggerBase {
+  scheduleType: 'specific_date';
+  specificDate: string; // YYYY-MM-DD format
+  days?: never; // Ensures days array is not present for this type
+}
+
+export type TimeAutomationTrigger = RecurringTimeAutomationTrigger | SpecificDateAutomationTrigger;
 
 export type AutomationTrigger = DeviceAutomationTrigger | TimeAutomationTrigger;
 
 export type AutomationActionCommand = 'turn_on' | 'turn_off';
 
 export interface AutomationAction {
-  deviceId: string; // ID of the device to act upon
+  deviceId: string;
   command: AutomationActionCommand;
-  // params?: Record<string, any>; // For future actions like set_brightness: { brightness: 50 }
 }
 
 export interface AutomationRule {
-  id: string; // Unique ID for the automation rule
-  name: string; // User-defined name for the automation
-  trigger: AutomationTrigger; // The primary trigger (time or a single device event)
-  conditions?: DeviceAutomationTrigger[]; // Optional: Additional device conditions that must ALL be true
+  id: string;
+  name: string;
+  trigger: AutomationTrigger;
+  conditions?: DeviceAutomationTrigger[];
   action: AutomationAction;
-  isEnabled: boolean; // To enable/disable the automation without deleting it
-  lastTriggered?: string; // ISO string, optional
+  isEnabled: boolean;
+  lastTriggered?: string;
 }

@@ -3,7 +3,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import type { AutomationRule, DeviceAutomationTrigger } from '@/types/automations';
+import type { AutomationRule, DeviceAutomationTrigger, TimeAutomationTrigger } from '@/types/automations';
 import type { Device } from '@/types/home-assistant';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { fetchDevicesFromApi } from '@/services/homeAssistantService';
@@ -13,12 +13,12 @@ import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
-import { PlusCircle, Edit3, Trash2, Zap, Settings2, Clock, AlertCircle, Layers } from 'lucide-react';
+import { PlusCircle, Edit3, Trash2, Zap, Settings2, Clock, AlertCircle, Layers, CalendarDays } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { AutomationRuleForm } from './AutomationRuleForm';
 import Link from 'next/link';
 
-const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const dayLabelsShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export function ManageAutomationsContent() {
   const {
@@ -132,12 +132,23 @@ export function ManageAutomationsContent() {
   const formatTrigger = (rule: AutomationRule): string => {
     if (rule.trigger.type === 'device') {
       const triggerDeviceName = getDeviceName(rule.trigger.deviceId);
-      return `IF ${triggerDeviceName} state ${rule.trigger.condition.replace('_', ' ')} ${formatConditionValue(rule.trigger.value)}`;
+      return `IF ${triggerDeviceName} state ${rule.trigger.condition.replace(/_/g, ' ')} ${formatConditionValue(rule.trigger.value)}`;
     } else if (rule.trigger.type === 'time') {
-      const daysString = rule.trigger.days.length === 7 
-        ? 'Every day' 
-        : rule.trigger.days.map(d => dayLabels[d]).join(', ') || 'No days selected';
-      return `AT ${rule.trigger.time} ON ${daysString}`;
+      const timeTrigger = rule.trigger as TimeAutomationTrigger; // Cast to base TimeAutomationTrigger
+      if (timeTrigger.scheduleType === 'recurring') {
+        const daysString = timeTrigger.days.length === 7 
+          ? 'Every day' 
+          : timeTrigger.days.map(d => dayLabelsShort[d]).join(', ') || 'No days selected';
+        return `AT ${timeTrigger.time} ON ${daysString}`;
+      } else if (timeTrigger.scheduleType === 'specific_date') {
+        try {
+          const date = new Date(timeTrigger.specificDate + 'T00:00:00'); // Ensure parsing as local date
+          const formattedDate = date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+          return `ON ${formattedDate} AT ${timeTrigger.time}`;
+        } catch (e) {
+          return `ON ${timeTrigger.specificDate} AT ${timeTrigger.time}`; // Fallback
+        }
+      }
     }
     return "Unknown trigger";
   };
@@ -145,13 +156,13 @@ export function ManageAutomationsContent() {
   const formatConditions = (conditions?: DeviceAutomationTrigger[]): string | null => {
     if (!conditions || conditions.length === 0) return null;
     return conditions.map(cond => 
-      `AND ${getDeviceName(cond.deviceId)} state ${cond.condition.replace('_', ' ')} ${formatConditionValue(cond.value)}`
+      `AND ${getDeviceName(cond.deviceId)} state ${cond.condition.replace(/_/g, ' ')} ${formatConditionValue(cond.value)}`
     ).join(' ');
   };
 
   const formatAction = (rule: AutomationRule): string => {
     const actionDeviceName = getDeviceName(rule.action.deviceId);
-    return `THEN ${rule.action.command.replace('_', ' ')} ${actionDeviceName}`;
+    return `THEN ${rule.action.command.replace(/_/g, ' ')} ${actionDeviceName}`;
   };
 
   const isLoading = isLoadingPreferences || isLoadingApiDevices;
@@ -190,7 +201,7 @@ export function ManageAutomationsContent() {
         <CardHeader>
           <CardTitle className="flex items-center"><Zap className="mr-2 h-6 w-6 text-primary" />Automation Rules</CardTitle>
           <CardDescription>
-            Define rules to automate device actions. Primary trigger can be a device state or a schedule. 
+            Define rules to automate device actions. Primary trigger can be a device state, a recurring schedule, or a specific date/time. 
             Optionally, add device conditions that must also be true.
             A separate backend service is required to execute these rules.
           </CardDescription>
@@ -217,20 +228,24 @@ export function ManageAutomationsContent() {
             </p>
           ) : (
             <div className="space-y-3">
-              {automations.map(rule => (
+              {automations.map(rule => {
+                const triggerIsTime = rule.trigger.type === 'time';
+                const triggerIsSpecificDate = triggerIsTime && (rule.trigger as TimeAutomationTrigger).scheduleType === 'specific_date';
+
+                return (
                 <Card key={rule.id} className={`shadow-sm hover:shadow-md transition-shadow ${!rule.isEnabled ? 'opacity-70 bg-muted/20' : 'bg-card'}`}>
                   <CardHeader className="pb-3 pt-4">
                     <div className="flex justify-between items-start gap-4">
                       <div className="flex-grow min-w-0">
                         <CardTitle className="text-lg truncate" title={rule.name}>{rule.name}</CardTitle>
                         <CardDescription className="text-xs mt-1 space-y-0.5">
-                          <span className={`flex items-center ${rule.trigger.type === 'time' ? 'text-blue-400' : 'text-orange-400'}`}>
-                            {rule.trigger.type === 'time' ? <Clock className="mr-1.5 h-3.5 w-3.5" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}
+                          <span className={`flex items-center ${triggerIsSpecificDate ? 'text-indigo-400' : (triggerIsTime ? 'text-blue-400' : 'text-orange-400')}`}>
+                            {triggerIsSpecificDate ? <CalendarDays className="mr-1.5 h-3.5 w-3.5" /> : (triggerIsTime ? <Clock className="mr-1.5 h-3.5 w-3.5" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />)}
                             {formatTrigger(rule)}
                           </span>
                           {rule.conditions && rule.conditions.length > 0 && (
                             <span className="flex items-center text-purple-400">
-                              <Layers className="mr-1.5 h-3.5 w-3.5" /> {/* Icon for conditions */}
+                              <Layers className="mr-1.5 h-3.5 w-3.5" />
                               {formatConditions(rule.conditions)}
                             </span>
                           )}
@@ -258,7 +273,8 @@ export function ManageAutomationsContent() {
                     </div>
                   </CardHeader>
                 </Card>
-              ))}
+              );
+            })}
             </div>
           )}
         </CardContent>

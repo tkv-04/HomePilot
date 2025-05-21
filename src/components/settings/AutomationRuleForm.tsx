@@ -2,7 +2,7 @@
 // src/components/settings/AutomationRuleForm.tsx
 "use client";
 
-import type { AutomationRule, AutomationTrigger, AutomationAction, AutomationConditionOperator, AutomationActionCommand, DeviceAutomationTrigger, TimeAutomationTrigger } from '@/types/automations';
+import type { AutomationRule, AutomationTrigger, AutomationAction, AutomationConditionOperator, AutomationActionCommand, DeviceAutomationTrigger, TimeAutomationTrigger, RecurringTimeAutomationTrigger, SpecificDateAutomationTrigger } from '@/types/automations';
 import type { Device } from '@/types/home-assistant';
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
@@ -11,10 +11,11 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from '@/components/ui/dialog';
-import { Save, X, Trash2, AlertTriangle, Clock, Zap, PlusCircle } from 'lucide-react';
+import { Save, X, Trash2, AlertTriangle, Clock, Zap, PlusCircle, CalendarDays } from 'lucide-react';
 import { ScrollArea } from '../ui/scroll-area';
-import { v4 as uuidv4 } from 'uuid'; // For unique keys for conditions
+import { v4 as uuidv4 } from 'uuid';
 
 interface AutomationRuleFormProps {
   rule?: AutomationRule | null;
@@ -31,10 +32,18 @@ const defaultDeviceTrigger: DeviceAutomationTrigger = {
   value: '',
 };
 
-const defaultTimeTrigger: TimeAutomationTrigger = {
+const defaultRecurringTimeTrigger: RecurringTimeAutomationTrigger = {
   type: 'time',
+  scheduleType: 'recurring',
   time: '08:00', 
   days: [], 
+};
+
+const defaultSpecificDateTrigger: SpecificDateAutomationTrigger = {
+    type: 'time',
+    scheduleType: 'specific_date',
+    time: '08:00',
+    specificDate: new Date().toISOString().split('T')[0], // Default to today
 };
 
 const defaultAction: AutomationAction = {
@@ -65,13 +74,18 @@ const daysOfWeek = [
 
 export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, isEditing }: AutomationRuleFormProps) {
   const [name, setName] = useState('');
-  const [triggerType, setTriggerType] = useState<'device' | 'time'>('device');
-  const [deviceTrigger, setDeviceTrigger] = useState<DeviceAutomationTrigger>({ ...defaultDeviceTrigger });
-  const [timeTrigger, setTimeTrigger] = useState<TimeAutomationTrigger>({ ...defaultTimeTrigger });
+  const [primaryTriggerType, setPrimaryTriggerType] = useState<'device' | 'time'>('device');
   
-  // Conditions state - an array of DeviceAutomationTrigger-like objects, each with a unique UI key
-  const [conditions, setConditions] = useState<(DeviceAutomationTrigger & { uiKey: string })[]>([]);
+  // Device Trigger State
+  const [deviceTrigger, setDeviceTrigger] = useState<DeviceAutomationTrigger>({ ...defaultDeviceTrigger });
+  
+  // Time Trigger State (now more complex)
+  const [timeScheduleType, setTimeScheduleType] = useState<'recurring' | 'specific_date'>('recurring');
+  const [timeTriggerTime, setTimeTriggerTime] = useState('08:00');
+  const [timeTriggerDays, setTimeTriggerDays] = useState<number[]>([]);
+  const [timeTriggerSpecificDate, setTimeTriggerSpecificDate] = useState(new Date().toISOString().split('T')[0]);
 
+  const [conditions, setConditions] = useState<(DeviceAutomationTrigger & { uiKey: string })[]>([]);
   const [action, setAction] = useState<AutomationAction>({ ...defaultAction });
   const [isEnabled, setIsEnabled] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -81,20 +95,39 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
       setName(rule.name || '');
       setIsEnabled(rule.isEnabled !== undefined ? rule.isEnabled : true);
       setAction(rule.action || { ...defaultAction });
-      setTriggerType(rule.trigger.type);
+      setPrimaryTriggerType(rule.trigger.type);
+
       if (rule.trigger.type === 'device') {
         setDeviceTrigger(rule.trigger);
-        setTimeTrigger({ ...defaultTimeTrigger }); 
+        // Reset time trigger states
+        setTimeScheduleType('recurring');
+        setTimeTriggerTime(defaultRecurringTimeTrigger.time);
+        setTimeTriggerDays(defaultRecurringTimeTrigger.days);
+        setTimeTriggerSpecificDate(defaultSpecificDateTrigger.specificDate);
       } else if (rule.trigger.type === 'time') {
-        setTimeTrigger(rule.trigger);
-        setDeviceTrigger({ ...defaultDeviceTrigger }); 
+        const tt = rule.trigger as TimeAutomationTrigger; // Cast to base TimeAutomationTrigger first
+        setTimeTriggerTime(tt.time);
+        setTimeScheduleType(tt.scheduleType);
+        if (tt.scheduleType === 'recurring') {
+          setTimeTriggerDays(tt.days);
+          setTimeTriggerSpecificDate(defaultSpecificDateTrigger.specificDate);
+        } else if (tt.scheduleType === 'specific_date') {
+          setTimeTriggerSpecificDate(tt.specificDate);
+          setTimeTriggerDays(defaultRecurringTimeTrigger.days);
+        }
+        // Reset device trigger state
+        setDeviceTrigger({ ...defaultDeviceTrigger });
       }
       setConditions(rule.conditions?.map(c => ({ ...c, uiKey: uuidv4() })) || []);
     } else {
+      // Reset all to defaults for new rule
       setName('');
-      setTriggerType('device');
+      setPrimaryTriggerType('device');
       setDeviceTrigger({ ...defaultDeviceTrigger });
-      setTimeTrigger({ ...defaultTimeTrigger });
+      setTimeScheduleType('recurring');
+      setTimeTriggerTime(defaultRecurringTimeTrigger.time);
+      setTimeTriggerDays(defaultRecurringTimeTrigger.days);
+      setTimeTriggerSpecificDate(defaultSpecificDateTrigger.specificDate);
       setConditions([]);
       setAction({ ...defaultAction });
       setIsEnabled(true);
@@ -117,11 +150,11 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
   };
 
   const handleDayToggle = (dayId: number) => {
-    setTimeTrigger(prev => {
-      const newDays = prev.days.includes(dayId)
-        ? prev.days.filter(d => d !== dayId)
-        : [...prev.days, dayId].sort((a, b) => a - b);
-      return { ...prev, days: newDays };
+    setTimeTriggerDays(prev => {
+      const newDays = prev.includes(dayId)
+        ? prev.filter(d => d !== dayId)
+        : [...prev, dayId].sort((a, b) => a - b);
+      return newDays;
     });
   };
 
@@ -135,24 +168,30 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
 
   const handleConditionChange = (uiKey: string, field: keyof DeviceAutomationTrigger, value: any) => {
     setConditions(prev => prev.map(c => 
-      c.uiKey === uiKey ? { ...c, [field]: value, ...(field === 'deviceId' && { value: '' }) } : c // Reset value if deviceId changes
+      c.uiKey === uiKey ? { ...c, [field]: value, ...(field === 'deviceId' && { value: '' }) } : c
     ));
+  };
+  
+  const parseConditionValue = (deviceId: string, conditionOp: AutomationConditionOperator, rawValue: string | number | boolean) => {
+    if (isBooleanInputExpectedForEquals(deviceId, conditionOp)) {
+      return String(rawValue).toLowerCase() === 'on' || String(rawValue).toLowerCase() === 'true';
+    } else if (isNumericInputExpected(conditionOp)) {
+      const num = parseFloat(String(rawValue));
+      return isNaN(num) ? String(rawValue) : num; // Return string if not a number, otherwise the number
+    }
+    return String(rawValue);
   };
 
   const validateCondition = (cond: DeviceAutomationTrigger): string | null => {
     if (!cond.deviceId) return "Condition device not selected.";
-    let parsedValue: string | number | boolean = cond.value;
-    if (isBooleanInputExpectedForEquals(cond.deviceId, cond.condition)) {
-        if (String(cond.value).toLowerCase() === 'on' || String(cond.value) === 'true') parsedValue = true;
-        else if (String(cond.value).toLowerCase() === 'off' || String(cond.value) === 'false') parsedValue = false;
-        else return "For 'equals/not_equals' on switchable devices, condition value must be 'on', 'off', 'true', or 'false'.";
-    } else if (isNumericInputExpected(cond.condition)) {
-        const num = parseFloat(String(cond.value));
-        if (isNaN(num)) return "Numeric value required for this condition operator.";
-    } else if (String(cond.value).trim() === '') {
+    const parsedValue = parseConditionValue(cond.deviceId, cond.condition, cond.value);
+    if (isNumericInputExpected(cond.condition) && typeof parsedValue !== 'number') {
+        return "Numeric value required for this condition operator.";
+    }
+    if (String(cond.value).trim() === '') { // Check raw value for emptiness
         return "Condition value cannot be empty."
     }
-    return null; // No error
+    return null;
   };
 
 
@@ -163,23 +202,36 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
     }
 
     let finalTrigger: AutomationTrigger;
-    if (triggerType === 'device') {
+    if (primaryTriggerType === 'device') {
       const deviceTriggerError = validateCondition(deviceTrigger);
       if (deviceTriggerError) {
           alert(`Primary Trigger Error: ${deviceTriggerError}`);
           return;
       }
       finalTrigger = { ...deviceTrigger, value: parseConditionValue(deviceTrigger.deviceId, deviceTrigger.condition, deviceTrigger.value) };
-    } else { 
-      if (!timeTrigger.time) {
+    } else { // Time trigger
+      if (!timeTriggerTime) {
         alert("Please set a time for the schedule.");
         return;
       }
-      if (timeTrigger.days.length === 0) {
-        alert("Please select at least one day for the schedule.");
+      if (timeScheduleType === 'recurring' && timeTriggerDays.length === 0) {
+        alert("Please select at least one day for a recurring schedule.");
         return;
       }
-      finalTrigger = { ...timeTrigger };
+      if (timeScheduleType === 'specific_date' && !timeTriggerSpecificDate) {
+        alert("Please select a specific date for the schedule.");
+        return;
+      }
+      if (timeScheduleType === 'specific_date' && new Date(timeTriggerSpecificDate + 'T' + timeTriggerTime) <= new Date()) {
+        alert("The specific date and time must be in the future.");
+        return;
+      }
+
+      if (timeScheduleType === 'recurring') {
+        finalTrigger = { type: 'time', scheduleType: 'recurring', time: timeTriggerTime, days: timeTriggerDays };
+      } else { // specific_date
+        finalTrigger = { type: 'time', scheduleType: 'specific_date', time: timeTriggerTime, specificDate: timeTriggerSpecificDate };
+      }
     }
 
     const finalConditions: DeviceAutomationTrigger[] = [];
@@ -190,13 +242,12 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
             return;
         }
         finalConditions.push({
-            type: 'device',
+            type: 'device', // All additional conditions are device conditions
             deviceId: cond.deviceId,
             condition: cond.condition,
             value: parseConditionValue(cond.deviceId, cond.condition, cond.value)
         });
     }
-
 
     if (!action.deviceId) {
       alert("Please select an action device.");
@@ -207,7 +258,7 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
     const ruleDataToSave: Omit<AutomationRule, 'id'> = {
       name: name.trim(),
       trigger: finalTrigger,
-      conditions: finalConditions.length > 0 ? finalConditions : undefined, // Only include if there are conditions
+      conditions: finalConditions.length > 0 ? finalConditions : undefined,
       action,
       isEnabled,
     };
@@ -220,15 +271,6 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
     setIsSaving(false);
   };
   
-  const parseConditionValue = (deviceId: string, conditionOp: AutomationConditionOperator, rawValue: string | number | boolean) => {
-    if (isBooleanInputExpectedForEquals(deviceId, conditionOp)) {
-      return String(rawValue).toLowerCase() === 'on' || String(rawValue).toLowerCase() === 'true';
-    } else if (isNumericInputExpected(conditionOp)) {
-      return parseFloat(String(rawValue));
-    }
-    return String(rawValue);
-  };
-
 
   const renderDeviceConditionValueInput = (
     conditionObj: DeviceAutomationTrigger, 
@@ -262,7 +304,6 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
     );
   };
 
-
   if (availableDevices.length === 0) {
     return (
       <div className="p-6 text-center">
@@ -278,25 +319,29 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
   }
   
   const primaryTriggerValid = 
-    triggerType === 'device' ? deviceTrigger.deviceId && String(deviceTrigger.value).trim() !== '' :
-    triggerType === 'time' ? timeTrigger.time && timeTrigger.days.length > 0 : false;
+    primaryTriggerType === 'device' ? (deviceTrigger.deviceId && String(deviceTrigger.value).trim() !== '') :
+    primaryTriggerType === 'time' ? 
+      (timeTriggerTime && 
+        ( (timeScheduleType === 'recurring' && timeTriggerDays.length > 0) || 
+          (timeScheduleType === 'specific_date' && timeTriggerSpecificDate && (new Date(timeTriggerSpecificDate + 'T' + timeTriggerTime) > new Date()) )
+        )
+      ) 
+    : false;
 
   const allConditionsValid = conditions.every(c => c.deviceId && String(c.value).trim() !== '');
   const actionValid = action.deviceId;
-
 
   return (
     <>
       <DialogHeader>
         <DialogTitle>{isEditing ? 'Edit Automation Rule' : 'Create New Automation Rule'}</DialogTitle>
         <DialogDescription>
-          Define a primary trigger (device state or time). Optionally add device conditions (all must be true). Then define an action.
+          Define a primary trigger (device state or time/date). Optionally add device conditions (all must be true). Then define an action.
           A separate backend service is required to execute these rules.
         </DialogDescription>
       </DialogHeader>
       <ScrollArea className="max-h-[70vh] p-1 -mx-1">
         <div className="space-y-6 p-4 pr-6">
-          {/* Automation Name & Enabled Switch */}
           <div>
             <Label htmlFor="automation-name" className="text-base font-medium">Automation Name</Label>
             <Input
@@ -316,20 +361,18 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
             </div>
           </div>
 
-          {/* Primary Trigger Selection */}
           <div>
             <Label htmlFor="trigger-type" className="text-base font-medium">Primary Trigger Type</Label>
-            <Select value={triggerType} onValueChange={(val: 'device' | 'time') => setTriggerType(val)} disabled={isSaving}>
+            <Select value={primaryTriggerType} onValueChange={(val: 'device' | 'time') => setPrimaryTriggerType(val)} disabled={isSaving}>
               <SelectTrigger id="trigger-type" className="mt-1 bg-input/50"><SelectValue placeholder="Select trigger type" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="device"><Zap className="mr-2 h-4 w-4 inline-block" /> Device State</SelectItem>
-                <SelectItem value="time"><Clock className="mr-2 h-4 w-4 inline-block" /> Scheduled Time</SelectItem>
+                <SelectItem value="device"><Zap className="mr-2 h-4 w-4 inline-block" /> Device State Change</SelectItem>
+                <SelectItem value="time"><Clock className="mr-2 h-4 w-4 inline-block" /> Scheduled Time/Date</SelectItem>
               </SelectContent>
             </Select>
           </div>
           
-          {/* Device State Primary Trigger */}
-          {triggerType === 'device' && (
+          {primaryTriggerType === 'device' && (
             <fieldset className="border p-4 rounded-md shadow-sm bg-card/30">
               <legend className="text-lg font-semibold px-2 text-primary flex items-center"><Zap className="mr-2 h-5 w-5"/>Device State Trigger (IF...)</legend>
               <div className="space-y-4 mt-2">
@@ -359,32 +402,55 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
             </fieldset>
           )}
 
-          {/* Time Primary Trigger */}
-          {triggerType === 'time' && (
+          {primaryTriggerType === 'time' && (
              <fieldset className="border p-4 rounded-md shadow-sm bg-card/30">
-              <legend className="text-lg font-semibold px-2 text-primary flex items-center"><Clock className="mr-2 h-5 w-5"/>Scheduled Time Trigger (AT...)</legend>
+              <legend className="text-lg font-semibold px-2 text-primary flex items-center"><Clock className="mr-2 h-5 w-5"/>Scheduled Trigger (AT...)</legend>
               <div className="space-y-4 mt-2">
                 <div>
-                  <Label htmlFor="trigger-time">Time (HH:mm)</Label>
-                  <Input id="trigger-time" type="time" value={timeTrigger.time} onChange={(e) => setTimeTrigger(t => ({ ...t, time: e.target.value }))} disabled={isSaving} className="bg-input/50"/>
+                  <Label>Schedule Type</Label>
+                  <RadioGroup value={timeScheduleType} onValueChange={(val: 'recurring' | 'specific_date') => setTimeScheduleType(val)} className="flex space-x-4 mt-1">
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="recurring" id="time-recurring" />
+                      <Label htmlFor="time-recurring">Recurring (Days of Week)</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="specific_date" id="time-specific" />
+                      <Label htmlFor="time-specific">Specific Date</Label>
+                    </div>
+                  </RadioGroup>
                 </div>
+
                 <div>
-                  <Label>Days of the Week</Label>
-                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mt-1">
-                    {daysOfWeek.map(day => (
-                      <div key={day.id} className="flex items-center space-x-2">
-                        <Checkbox id={`day-${day.id}`} checked={timeTrigger.days.includes(day.id)} onCheckedChange={() => handleDayToggle(day.id)} disabled={isSaving}/>
-                        <Label htmlFor={`day-${day.id}`} className="text-sm font-normal">{day.label}</Label>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">Select at least one day.</p>
+                  <Label htmlFor="trigger-time">Time (HH:mm)</Label>
+                  <Input id="trigger-time" type="time" value={timeTriggerTime} onChange={(e) => setTimeTriggerTime(e.target.value)} disabled={isSaving} className="bg-input/50"/>
                 </div>
+
+                {timeScheduleType === 'recurring' && (
+                  <div>
+                    <Label>Days of the Week</Label>
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mt-1">
+                      {daysOfWeek.map(day => (
+                        <div key={day.id} className="flex items-center space-x-2">
+                          <Checkbox id={`day-${day.id}`} checked={timeTriggerDays.includes(day.id)} onCheckedChange={() => handleDayToggle(day.id)} disabled={isSaving}/>
+                          <Label htmlFor={`day-${day.id}`} className="text-sm font-normal">{day.label}</Label>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">Select at least one day for recurring.</p>
+                  </div>
+                )}
+
+                {timeScheduleType === 'specific_date' && (
+                  <div>
+                    <Label htmlFor="trigger-specific-date">Specific Date</Label>
+                    <Input id="trigger-specific-date" type="date" value={timeTriggerSpecificDate} onChange={(e) => setTimeTriggerSpecificDate(e.target.value)} disabled={isSaving} className="bg-input/50"/>
+                     <p className="text-xs text-muted-foreground mt-1">Date must be in the future.</p>
+                  </div>
+                )}
               </div>
             </fieldset>
           )}
 
-          {/* Additional Conditions Section */}
            <fieldset className="border p-4 rounded-md shadow-sm bg-card/30">
             <legend className="text-lg font-semibold px-2 text-primary flex items-center">Additional Conditions (AND ALL MUST BE TRUE)</legend>
             <div className="space-y-4 mt-2">
@@ -423,7 +489,6 @@ export function AutomationRuleForm({ rule, availableDevices, onSave, onCancel, i
             </div>
           </fieldset>
 
-          {/* Action Section */}
           <fieldset className="border p-4 rounded-md shadow-sm bg-card/30">
             <legend className="text-lg font-semibold px-2 text-primary">Action (THEN...)</legend>
             <div className="space-y-4 mt-2">
