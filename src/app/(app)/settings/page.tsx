@@ -1,4 +1,3 @@
-
 // src/app/(app)/settings/page.tsx
 "use client";
 
@@ -6,7 +5,7 @@ import { VoiceSettings } from '@/components/settings/VoiceSettings';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { Settings2Icon, ListChecks, HomeIcon, Layers3, Zap } from 'lucide-react'; // Added Zap
+import { Settings2Icon, ListChecks, HomeIcon, Layers3, Zap, Workflow } from 'lucide-react'; // Added Workflow
 import Link from 'next/link';
 
 export default function SettingsPage() {
@@ -75,6 +74,30 @@ export default function SettingsPage() {
       </Card>
 
       <Separator />
+      
+      <Card className="shadow-lg">
+        <CardHeader>
+          <CardTitle className="flex items-center text-xl">
+            <Workflow className="mr-2 h-5 w-5 text-primary" />
+            Custom Routines
+          </CardTitle>
+          <CardDescription>
+            Create custom voice commands to trigger multiple actions.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground mb-4">
+            Define routines like "Jarvis, movie time" to dim lights, turn on TV, etc.
+          </p>
+          <Button asChild size="lg">
+            <Link href="/settings/routines">
+              <Workflow className="mr-2 h-5 w-5" /> Manage Routines
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Separator />
 
       <Card className="shadow-lg">
         <CardHeader>
@@ -83,12 +106,12 @@ export default function SettingsPage() {
             Automation Rules
           </CardTitle>
           <CardDescription>
-            Create rules to automate your smart home based on device triggers.
+            Create rules to automate your smart home based on device triggers or schedules.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <p className="text-muted-foreground mb-4">
-            Define automations like "If Living Room Temperature is above 25°C, then turn on Living Room Fan".
+            Define automations like "If Living Room Temperature is above 25°C, then turn on Living Room Fan" or "Every weekday at 7 AM, turn on Kitchen Lights".
             (Note: A separate backend service is required to execute these rules).
           </p>
           <Button asChild size="lg">
