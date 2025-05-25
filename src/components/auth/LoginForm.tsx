@@ -32,8 +32,8 @@ export function LoginForm() {
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
     defaultValues: {
-      email: "test@test.com",
-      password: "password", // Changed default password for testing Firebase Auth
+      email: "", // Removed hardcoded email
+      password: "", // Removed hardcoded password
     },
   });
 
@@ -53,7 +53,7 @@ export function LoginForm() {
       // Toast for success is handled in AuthContext now.
     } catch (error) {
       // Error toast is handled in AuthContext's login method.
-      console.error("Login attempt failed in LoginForm component:", error); // Added for more specific logging
+      console.error("Login attempt failed in LoginForm component:", error);
     } finally {
       setIsSubmitting(false);
     }
