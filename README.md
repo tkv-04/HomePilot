@@ -2,7 +2,7 @@
 
 HomePilot is a modern, web-based dashboard for controlling and automating your smart home devices. It features a sophisticated voice control system powered by Google's Genkit, allowing for natural language commands, custom routines, and powerful automations.
 
-![HomePilot Dashboard Screenshot](https://placehold.co/800x450.png?text=HomePilot+Dashboard)
+
 
 ## ✨ Key Features
 
