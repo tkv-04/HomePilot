@@ -42,8 +42,8 @@ This is the **frontend** application. It requires backend services to function c
 
 1.  **Clone the repository:**
     ```bash
-    git clone <your-repository-url>
-    cd <repository-name>
+    git clone https://github.com/tkv-04/HomePilot.git
+    cd HomePilot
     ```
 
 2.  **Install dependencies:**
