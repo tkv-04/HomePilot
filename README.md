@@ -92,3 +92,7 @@ This is the **frontend** application. It requires backend services to function c
 - `src/services/`: Client-side functions for communicating with external APIs.
 - `src/types/`: TypeScript type definitions for the application.
 - `src/lib/`: Utility functions and Firebase initialization.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
